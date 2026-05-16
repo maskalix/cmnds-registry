@@ -1,29 +1,23 @@
 {
   "name": "remount",
-  "version": "1.0.0",
-  "description": "Remount rclone remotes quickly",
+  "version": "2.0.0",
+  "description": "Unmount a path and re-run mount -a from /etc/fstab",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "remount.sh",
+  "type": "binary",
+  "entry_point": "remount",
   "category": "files",
   "dependencies": {
-    "apt": ["rclone", "fuse"],
+    "apt": [],
     "plugins": []
   },
   "help": {
-    "usage": "remount",
-    "description": "Quick remount of all rclone remotes. Unmounts and then remounts all configured rclone remote storage.",
+    "usage": "remount <mountpoint>",
+    "description": "Unmounts the given path then reapplies /etc/fstab via mount -a. Useful after fstab edits or when a single mount becomes stale.",
     "options": [
-      {
-        "flag": "-h, --help",
-        "description": "Show this help message"
-      }
+      { "flag": "-h, --help", "description": "Show this help" }
     ],
     "examples": [
-      {
-        "command": "remount",
-        "description": "Remount all rclone remotes"
-      }
+      { "command": "remount /mnt/data", "description": "Remount /mnt/data" }
     ]
   }
 }

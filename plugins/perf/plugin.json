@@ -1,29 +1,25 @@
 {
   "name": "perf",
-  "version": "1.0.0",
-  "description": "System performance monitoring",
+  "version": "2.0.0",
+  "description": "System performance snapshot (CPU, memory, load, disk)",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "perf.sh",
+  "type": "binary",
+  "entry_point": "perf",
   "category": "system",
   "dependencies": {
-    "apt": ["sysstat"],
+    "apt": [],
     "plugins": []
   },
   "help": {
-    "usage": "perf",
-    "description": "Display system performance metrics including CPU, memory, disk I/O, and network statistics.",
+    "usage": "perf [-w]",
+    "description": "Reads /proc directly — no external tools required. Use -w for a self-refreshing snapshot.",
     "options": [
-      {
-        "flag": "-h, --help",
-        "description": "Show this help message"
-      }
+      { "flag": "-w, --watch", "description": "Refresh every 2 seconds" },
+      { "flag": "-h, --help", "description": "Show this help" }
     ],
     "examples": [
-      {
-        "command": "perf",
-        "description": "Show system performance statistics"
-      }
+      { "command": "perf", "description": "One-shot snapshot" },
+      { "command": "perf -w", "description": "Live monitor" }
     ]
   }
 }

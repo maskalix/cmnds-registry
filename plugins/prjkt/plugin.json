@@ -1,7 +1,7 @@
 {
   "name": "prjkt",
   "version": "1.0.0",
-  "description": "Docker project management tool",
+  "description": "Docker project management tool (v1 bash — Go rewrite pending)",
   "author": "Martin Skalicky",
   "type": "script",
   "entry_point": "prjkt.sh",

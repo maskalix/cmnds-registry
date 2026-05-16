@@ -1,10 +1,10 @@
 {
   "name": "rcmount",
-  "version": "1.0.0",
-  "description": "Manage rclone remote mounts",
+  "version": "2.0.0",
+  "description": "Manage rclone remote mounts via a config file",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "rcmount.sh",
+  "type": "binary",
+  "entry_point": "rcmount",
   "category": "files",
   "dependencies": {
     "apt": ["rclone", "fuse"],

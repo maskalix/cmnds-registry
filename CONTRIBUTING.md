@@ -1,62 +1,124 @@
 # Contributing to cmnds-registry
 
-## Plugin requirements
+## Choosing a plugin type
 
-Every plugin folder under `plugins/` must contain:
-
-1. **`plugin.json`** — manifest matching the schema in [maskalix/cmnds PLUGIN_SCHEMA.md](https://github.com/maskalix/cmnds/blob/main/PLUGIN_SCHEMA.md).
-2. **An entry-point script** named after `plugin.json:entry_point`.
-3. (Optional) Any supporting files, templates, configs.
-
-Required fields in `plugin.json`:
-
-| Field | Type | Notes |
+| Type | Use when | Avoid when |
 |---|---|---|
-| `name` | string | Must match the folder name and the `registry.json` entry. |
-| `version` | string | Semver (`MAJOR.MINOR.PATCH`). |
-| `description` | string | One-line summary shown in `cmnds search`. |
-| `type` | string | `"script"` for bash, `"binary"` for compiled. |
-| `entry_point` | string | Filename of the executable inside the plugin folder. |
-| `category` | string | `docker`, `files`, `system`, `ssh`, `network`, `security`, `revpro`, etc. |
+| **`binary` (Go)** | Default. New plugins, anything non-trivial. | Almost never — Go always works. |
+| **`script` (bash)** | Two-line shell wrappers where Go would be more code than logic. | Anything stateful, anything with parsing, anything > 30 lines. |
+| **`python`** | Heavy templating, data processing where stdlib really helps. | Anything Go can do — Python is heavy. |
 
-## Writing the script
+## Plugin manifest (`plugin.json`)
 
-Start from the template in the main repo (`PLUGIN_TEMPLATE.sh`). Important runtime guarantees provided by the cmnds host:
+Required fields:
 
-- Script is executed via `bash <entry_point> $args`.
-- Working directory is set to the plugin folder, so relative paths (templates, configs) resolve correctly.
-- `PATH` is prepended with every enabled plugin's folder, so you can invoke other plugins directly by name (e.g. `cmnds-config read REVPRO`).
-- The plugin can read shared configuration via `cmnds config read VAR_NAME`.
+```json
+{
+  "name": "myplugin",
+  "version": "1.0.0",
+  "description": "One-line summary",
+  "author": "Your Name",
+  "type": "binary",
+  "entry_point": "myplugin",
+  "category": "system",
+  "dependencies": {
+    "apt": [],
+    "plugins": []
+  },
+  "help": {
+    "usage": "myplugin <command>",
+    "description": "Detailed description",
+    "options": [{"flag": "-h, --help", "description": "Show help"}],
+    "examples": [{"command": "myplugin foo", "description": "Do foo"}]
+  }
+}
+```
 
-Recommended shebang: `#!/usr/bin/env bash` with `set -euo pipefail`.
+Field rules:
+- `name` must match the folder name and the `registry.json` entry.
+- `entry_point` for `binary` is the **compiled** binary name (no extension); for `script`/`python` it's the source filename.
+- `category` — pick one: `docker`, `files`, `system`, `ssh`, `network`, `security`, `revpro`, etc.
 
-## Submitting a plugin
+## Writing a Go plugin
+
+Layout:
+
+```
+plugins/myplugin/
+├── plugin.json
+├── main.go
+└── go.mod
+```
+
+Minimal `go.mod`:
+
+```
+module myplugin
+
+go 1.24
+```
+
+Minimal `main.go`:
+
+```go
+package main
+
+import (
+    "fmt"
+    "os"
+)
+
+func main() {
+    if len(os.Args) < 2 || os.Args[1] == "-h" {
+        fmt.Println("Usage: myplugin <command>")
+        return
+    }
+    fmt.Println("hello from myplugin:", os.Args[1])
+}
+```
+
+Runtime guarantees the cmnds host provides at invocation time:
+- Working directory is the plugin folder.
+- `PATH` is prepended with every enabled plugin's folder — call other plugins by name (`exec.LookPath("revpro")` works).
+- Shared config via `exec.Command("cmnds", "config", "read", "VARNAME")`.
+
+Keep binaries small and CGO-free:
+
+```bash
+go build -trimpath -ldflags="-s -w" -o myplugin .
+```
+
+## Writing a bash plugin (when really needed)
+
+Start with `set -euo pipefail`. Read shared config with `cmnds config read NAME`. Print colored prefixes using ANSI escapes. Keep the script focused — if it grows past 50 lines, port it to Go.
+
+## Submitting
 
 1. Fork this repo.
-2. `mkdir plugins/<your-plugin>` and add `plugin.json` + your script.
-3. Run `bash scripts/build-registry.sh` to refresh `registry.json` (or let CI do it on PR).
-4. Open a PR. CI runs:
-   - JSON validity on `registry.json` and every `plugin.json`.
+2. `mkdir plugins/<your-plugin>`, add files.
+3. `bash scripts/build-registry.sh` to refresh `registry.json`.
+4. Test locally:
+   ```bash
+   cd plugins/<your-plugin> && go build -o <name> . && ./<name> ...
+   ```
+5. Open a PR. CI runs:
+   - `registry.json` schema check.
+   - Every `plugin.json` has the required fields.
    - Folder name matches `plugin.json.name`.
-   - Entry point exists.
-   - Plugin is listed in `registry.json`.
-   - Shellcheck on every `.sh` (warnings tolerated, errors block merge).
-5. On merge, a maintainer creates a tag `<name>-v<version>` and the release workflow uploads `releases/<name>-<version>.tar.gz` to the GitHub Release.
+   - Plugin listed in `registry.json`.
+   - For Go plugins: `go vet` + `go build`.
+   - For bash plugins: shellcheck warnings (non-fatal).
+6. On merge, a maintainer tags `<name>-v<version>`. The release job cross-compiles for linux/amd64 and linux/arm64 and uploads the tarballs.
 
 ## Versioning
 
-- Bump `version` in `plugin.json` for every user-visible change.
-- Use semver: breaking change → MAJOR, new feature → MINOR, fix → PATCH.
-- Tag format: `<name>-v<version>` (e.g. `revpro-v1.2.0`).
+Semver. Bump for every user-visible change. Tag format: `<name>-v<version>` (e.g. `reg-v2.0.0`).
 
-## Local testing
+## Local testing against the real cmnds binary
 
 ```bash
-# From the main cmnds repo:
-export CMNDS_REGISTRY_URL=file:///path/to/your/cmnds-registry/registry.json   # if your cmnds build supports file://; otherwise serve locally
-# Or temporarily point at your fork:
+# Build a temporary registry index for your work-in-progress branch:
 export CMNDS_REGISTRY_URL=https://raw.githubusercontent.com/<you>/cmnds-registry/<branch>/registry.json
-
 cmnds search
 cmnds download <your-plugin>
 cmnds enable <your-plugin>
@@ -66,6 +128,5 @@ cmnds enable <your-plugin>
 ## Removing or renaming a plugin
 
 - Delete the folder under `plugins/`.
-- Regenerate `registry.json`.
-- Bump a date-stamped tag (e.g. `registry-2026-05-16`) to invalidate any caches.
-- Note the removal in the PR description so users can be warned.
+- Rebuild `registry.json`.
+- Commit + push. Existing users won't auto-uninstall; document removal in PR description and CHANGELOG.

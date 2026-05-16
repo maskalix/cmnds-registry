@@ -1,8 +1,10 @@
 # cmnds-registry
 
-Official plugin registry for [CMNDS](https://github.com/maskalix/cmnds) v2+.
+Official plugin registry for [CMNDS](https://github.com/maskalix/cmnds-v2) v2+.
 
-The `cmnds` binary fetches `registry.json` from this repo to discover available plugins. Each plugin lives in its own folder under `plugins/` and is shipped as a `.tar.gz` bundle through GitHub Releases.
+The `cmnds` binary fetches `registry.json` from this repo to discover plugins. Each plugin lives in its own folder under `plugins/` and is shipped as a `.tar.gz` bundle through GitHub Releases.
+
+**Plugins are Go-first.** Bash is allowed but discouraged — Go gives single-binary distribution, type safety, and proper testing. Python is supported but reserved for cases where it's clearly better than Go (rare).
 
 ## Repository layout
 
@@ -10,33 +12,58 @@ The `cmnds` binary fetches `registry.json` from this repo to discover available 
 cmnds-registry/
 ├── registry.json              # Auto-generated index (do not edit by hand)
 ├── plugins/
-│   ├── a/
-│   │   ├── plugin.json        # Manifest (see PLUGIN_SCHEMA.md in cmnds repo)
-│   │   └── a.sh               # Entry point
-│   ├── revpro/
-│   │   ├── plugin.json
+│   ├── reg/                   # Go plugin
+│   │   ├── plugin.json        # Manifest (type: "binary")
+│   │   ├── main.go            # Source
+│   │   └── go.mod
+│   ├── revpro/                # v1 bash plugin (Go rewrite pending)
+│   │   ├── plugin.json        # type: "script"
 │   │   ├── revpro.sh
-│   │   └── template/...       # Supporting files
+│   │   └── template/...
 │   └── ...
 ├── scripts/
-│   ├── build-registry.sh      # Rebuilds registry.json from manifests
-│   └── build-bundles.sh       # Packs each plugin into releases/*.tar.gz
+│   ├── build-registry.sh      # Regenerates registry.json from manifests
+│   └── build-bundles.sh       # Compiles Go plugins, packs all to releases/*.tar.gz
 └── .github/workflows/
-    └── validate.yml           # CI: validates manifests + publishes releases
+    └── validate.yml           # CI: validates + builds + releases per (linux × amd64/arm64)
 ```
+
+## Plugin types
+
+| Type | When to use | `entry_point` |
+|---|---|---|
+| `binary` | **Default for new plugins.** Compile a Go (or other) binary. | filename of the compiled binary (e.g. `reg`) |
+| `script` | Legacy bash. Acceptable for trivial wrappers; flagged for migration. | `*.sh` filename |
+| `python` | Genuine cases needing Python's stdlib/templating. Avoid otherwise — Python is heavy. | `*.py` filename |
+
+## Plugin status
+
+| Plugin | Type | Status |
+|---|---|---|
+| cpc | binary (Go) | ✅ |
+| perf | binary (Go) | ✅ |
+| rcmount | binary (Go) | ✅ |
+| rec | binary (Go) | ✅ |
+| reg | binary (Go) | ✅ |
+| remount | binary (Go) | ✅ |
+| smartchck | binary (Go) | ✅ |
+| ssh-init | binary (Go) | ✅ |
+| system-update | binary (Go) | ✅ |
+| prjkt | script (bash) | ⚠ v1 — Go rewrite pending |
+| revpro | script (bash) | ⚠ v1 — Go rewrite pending |
 
 ## Installing a plugin (end user)
 
 ```bash
-cmnds search                   # List available plugins from this registry
-cmnds download <plugin>        # Pull and install
-cmnds enable <plugin>          # Activate (creates /usr/local/bin/<plugin> symlink)
-<plugin> [args]                # Use it
+cmnds                          # opens the TUI — browse + install + enable visually
+# or, on the CLI:
+cmnds search
+cmnds download <plugin>
+cmnds enable <plugin>
+<plugin> [args]                # standalone, no 'cmnds ' prefix needed
 ```
 
 ## Using a custom registry
-
-Set the `CMNDS_REGISTRY_URL` environment variable to point at a fork:
 
 ```bash
 export CMNDS_REGISTRY_URL=https://raw.githubusercontent.com/youruser/your-fork/main/registry.json
@@ -45,19 +72,18 @@ cmnds search
 
 ## Adding a plugin (contributor)
 
-See `CONTRIBUTING.md` for the full workflow. Short version:
+See `CONTRIBUTING.md`. Short version:
 
-1. Create `plugins/<your-plugin>/plugin.json` and `<your-plugin>.sh`.
-2. Run `bash scripts/build-registry.sh` to refresh the index.
-3. Open a PR. CI validates the manifest and shellchecks your script.
-4. On merge, a maintainer tags `<plugin>-v<version>` and the release workflow publishes the `.tar.gz`.
+1. `mkdir plugins/<name>` with `plugin.json`, `main.go`, `go.mod`.
+2. `bash scripts/build-registry.sh` to refresh the index.
+3. Open a PR. CI validates the manifest, runs `go vet` + `go build`, packages the bundle.
+4. On merge, a maintainer tags `<plugin>-v<version>` and the release workflow uploads the cross-compiled tarballs.
 
 ## Releasing
 
 ```bash
-# Trigger a release for a single plugin
-git tag a-v1.0.1
-git push origin a-v1.0.1
+git tag reg-v2.0.0
+git push origin reg-v2.0.0
 ```
 
-The `release` job in `.github/workflows/validate.yml` rebuilds all bundles and uploads them to the tagged release.
+The release job in `.github/workflows/validate.yml` cross-compiles every plugin for `linux/amd64` and `linux/arm64` and uploads the tarballs.

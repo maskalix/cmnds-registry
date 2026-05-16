@@ -1,10 +1,10 @@
 {
   "name": "ssh-init",
-  "version": "1.0.0",
-  "description": "Initialize SSH keys and configuration",
+  "version": "2.0.0",
+  "description": "Generate an SSH keypair for a user and register it in authorized_keys",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "ssh-init.sh",
+  "type": "binary",
+  "entry_point": "ssh-init",
   "category": "ssh",
   "dependencies": {
     "apt": ["openssh-server"],

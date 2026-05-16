@@ -1,7 +1,7 @@
 {
   "name": "revpro",
   "version": "1.0.0",
-  "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support",
+  "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support (v1 bash — Go rewrite pending)",
   "author": "Martin Skalicky",
   "type": "script",
   "entry_point": "revpro.sh",

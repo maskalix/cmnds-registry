@@ -1,29 +1,23 @@
 {
   "name": "reg",
-  "version": "1.0.0",
-  "description": "Docker registry management",
+  "version": "2.0.0",
+  "description": "Build and push a docker image to a configurable registry",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "reg.sh",
+  "type": "binary",
+  "entry_point": "reg",
   "category": "docker",
   "dependencies": {
     "apt": ["docker.io"],
     "plugins": []
   },
   "help": {
-    "usage": "reg <command>",
-    "description": "Manage Docker registry operations including login, push, pull, and image management.",
+    "usage": "reg <image-name>",
+    "description": "Builds the image in the current directory, tags it as $CUSTOM_REGISTRY/<image>:$CUSTOM_TAG, and pushes it. Registry and tag are read from 'cmnds config'.",
     "options": [
-      {
-        "flag": "-h, --help",
-        "description": "Show this help message"
-      }
+      { "flag": "-h, --help", "description": "Show this help" }
     ],
     "examples": [
-      {
-        "command": "reg",
-        "description": "Docker registry operations"
-      }
+      { "command": "reg myapp", "description": "Build, tag, and push myapp" }
     ]
   }
 }

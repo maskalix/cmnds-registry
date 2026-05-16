@@ -1,10 +1,10 @@
 {
   "name": "rec",
-  "version": "1.0.0",
-  "description": "Record/create executable script quickly with nano",
+  "version": "2.0.0",
+  "description": "Create or recreate a script, edit it, then run it",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "rec.sh",
+  "type": "binary",
+  "entry_point": "rec",
   "category": "files",
   "dependencies": {
     "apt": ["nano"],

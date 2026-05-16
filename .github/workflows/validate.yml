@@ -11,7 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install shellcheck
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install tooling
         run: sudo apt-get update -qq && sudo apt-get install -y shellcheck jq
 
       - name: Validate registry.json
@@ -47,20 +51,50 @@ jobs:
           done
           exit $fail
 
-      - name: Entry point exists
+      - name: Validate Go plugins (build + vet)
         run: |
           fail=0
           for d in plugins/*/; do
-            entry=$(jq -r '.entry_point' "$d/plugin.json")
-            if [ ! -f "$d/$entry" ]; then
-              echo "::error::missing entry_point $d$entry"; fail=1
+            if [ -f "$d/main.go" ]; then
+              name=$(basename "$d")
+              echo "▶ $name"
+              (cd "$d" && go vet ./... && go build -o "$name" .) || fail=1
+              rm -f "$d/$name"
             fi
           done
           exit $fail
 
-      - name: Shellcheck plugin scripts
+      - name: Validate script plugins (entry exists)
         run: |
-          find plugins -name '*.sh' -print0 | xargs -0 shellcheck -S warning -e SC1090,SC1091,SC2086,SC2155 || true
+          fail=0
+          for d in plugins/*/; do
+            ptype=$(jq -r '.type' "$d/plugin.json")
+            entry=$(jq -r '.entry_point' "$d/plugin.json")
+            case "$ptype" in
+              script|python)
+                if [ ! -f "$d$entry" ]; then
+                  echo "::error::missing entry_point $d$entry"
+                  fail=1
+                fi
+                ;;
+              binary)
+                if [ ! -f "$d/main.go" ]; then
+                  echo "::error::$d type=binary but no main.go"
+                  fail=1
+                fi
+                ;;
+            esac
+          done
+          exit $fail
+
+      - name: Shellcheck bash plugins
+        run: |
+          for d in plugins/*/; do
+            ptype=$(jq -r '.type' "$d/plugin.json")
+            if [ "$ptype" = "script" ]; then
+              find "$d" -name '*.sh' -print0 | xargs -0 shellcheck -S warning -e SC1090,SC1091,SC2086,SC2155 || true
+            fi
+          done
 
   release:
     needs: validate
@@ -68,15 +102,25 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
+    strategy:
+      matrix:
+        os: [linux]
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
       - name: Install jq
         run: sudo apt-get update -qq && sudo apt-get install -y jq
       - name: Build bundles
+        env:
+          CMNDS_BUILD_OS: ${{ matrix.os }}
+          CMNDS_BUILD_ARCH: ${{ matrix.arch }}
         run: bash scripts/build-bundles.sh
-      - name: Publish release
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag=${GITHUB_REF#refs/tags/}
-          gh release create "$tag" releases/*.tar.gz --title "$tag" --generate-notes
+          gh release upload "$tag" releases/*.tar.gz --clobber || gh release create "$tag" releases/*.tar.gz --title "$tag" --generate-notes

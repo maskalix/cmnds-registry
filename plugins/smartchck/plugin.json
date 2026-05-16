@@ -1,10 +1,10 @@
 {
   "name": "smartchck",
-  "version": "1.0.0",
-  "description": "Check SMART status of all drives",
+  "version": "2.0.0",
+  "description": "Check SMART overall health of every /dev/sd? disk",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "smartchck.sh",
+  "type": "binary",
+  "entry_point": "smartchck",
   "category": "files",
   "dependencies": {
     "apt": ["smartmontools"],
