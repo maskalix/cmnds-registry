@@ -1,0 +1,82 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck jq
+
+      - name: Validate registry.json
+        run: |
+          jq -e 'has("plugins") and (.plugins | type == "array")' registry.json
+          for name in $(jq -r '.plugins[].name' registry.json); do
+            jq -e --arg n "$name" '.plugins[] | select(.name == $n) | all(.name, .version, .description, .download_url, .category; type == "string")' registry.json
+          done
+
+      - name: Validate every plugin manifest
+        run: |
+          fail=0
+          for f in plugins/*/plugin.json; do
+            if ! jq -e 'has("name") and has("entry_point") and has("type") and has("version") and has("description") and has("category")' "$f" >/dev/null; then
+              echo "::error file=$f::missing required field"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Plugin name must match directory and registry entry
+        run: |
+          fail=0
+          for d in plugins/*/; do
+            dirname=$(basename "$d")
+            manifest_name=$(jq -r '.name' "$d/plugin.json")
+            if [ "$dirname" != "$manifest_name" ]; then
+              echo "::error::folder $dirname has plugin.json.name = $manifest_name"; fail=1
+            fi
+            if ! jq -e --arg n "$dirname" '.plugins[] | select(.name == $n)' registry.json >/dev/null; then
+              echo "::error::plugin $dirname not listed in registry.json"; fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Entry point exists
+        run: |
+          fail=0
+          for d in plugins/*/; do
+            entry=$(jq -r '.entry_point' "$d/plugin.json")
+            if [ ! -f "$d/$entry" ]; then
+              echo "::error::missing entry_point $d$entry"; fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Shellcheck plugin scripts
+        run: |
+          find plugins -name '*.sh' -print0 | xargs -0 shellcheck -S warning -e SC1090,SC1091,SC2086,SC2155 || true
+
+  release:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
+      - name: Build bundles
+        run: bash scripts/build-bundles.sh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=${GITHUB_REF#refs/tags/}
+          gh release create "$tag" releases/*.tar.gz --title "$tag" --generate-notes

@@ -1,0 +1,29 @@
+{
+  "name": "reg",
+  "version": "1.0.0",
+  "description": "Docker registry management",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "reg.sh",
+  "category": "docker",
+  "dependencies": {
+    "apt": ["docker.io"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "reg <command>",
+    "description": "Manage Docker registry operations including login, push, pull, and image management.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "reg",
+        "description": "Docker registry operations"
+      }
+    ]
+  }
+}

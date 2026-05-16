@@ -1,0 +1,29 @@
+{
+  "name": "cpc",
+  "version": "1.0.0",
+  "description": "Copy files from subfolders with progress tracking",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "cpc.sh",
+  "category": "files",
+  "dependencies": {
+    "apt": ["rsync"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "cpc",
+    "description": "Interactive tool to copy all files (not folders) from subfolders of a source directory to a destination directory. Shows progress for each file transfer using rsync.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "cpc",
+        "description": "Start interactive file copy with prompts for source and destination"
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "bicomposed",
+  "version": "1.0.0",
+  "description": "Docker compose up with build",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "bicomposed.sh",
+  "category": "docker",
+  "dependencies": {
+    "apt": ["docker.io", "docker-compose"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "bicomposed",
+    "description": "Runs 'docker compose up --build -d' to rebuild and start containers in detached mode.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "bicomposed",
+        "description": "Rebuild and start Docker compose services"
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "ssh-init",
+  "version": "1.0.0",
+  "description": "Initialize SSH keys and configuration",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "ssh-init.sh",
+  "category": "ssh",
+  "dependencies": {
+    "apt": ["openssh-server"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "ssh-init",
+    "description": "Generate SSH key pair, configure SSH server settings, and set up SSH authentication. Creates RSA keys and adds public key to authorized_keys.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "ssh-init",
+        "description": "Set up SSH keys and server configuration"
+      }
+    ]
+  }
+}

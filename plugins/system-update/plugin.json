@@ -1,0 +1,29 @@
+{
+  "name": "update",
+  "version": "1.0.0",
+  "description": "System update script",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "update.sh",
+  "category": "system",
+  "dependencies": {
+    "apt": [],
+    "plugins": []
+  },
+  "help": {
+    "usage": "update",
+    "description": "Comprehensive system update script that updates packages, cleans up, and performs maintenance.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "update",
+        "description": "Run full system update and maintenance"
+      }
+    ]
+  }
+}

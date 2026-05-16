@@ -1,0 +1,29 @@
+{
+  "name": "rec",
+  "version": "1.0.0",
+  "description": "Record/create executable script quickly with nano",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "rec.sh",
+  "category": "files",
+  "dependencies": {
+    "apt": ["nano"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "rec <filename>",
+    "description": "Quickly create and edit a bash script file. Opens nano editor, makes the file executable, and optionally runs it immediately after editing.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rec myscript.sh",
+        "description": "Create/edit myscript.sh, make it executable, and optionally run it"
+      }
+    ]
+  }
+}

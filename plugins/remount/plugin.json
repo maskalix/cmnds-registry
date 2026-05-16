@@ -1,0 +1,29 @@
+{
+  "name": "remount",
+  "version": "1.0.0",
+  "description": "Remount rclone remotes quickly",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "remount.sh",
+  "category": "files",
+  "dependencies": {
+    "apt": ["rclone", "fuse"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "remount",
+    "description": "Quick remount of all rclone remotes. Unmounts and then remounts all configured rclone remote storage.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "remount",
+        "description": "Remount all rclone remotes"
+      }
+    ]
+  }
+}

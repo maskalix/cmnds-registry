@@ -1,0 +1,29 @@
+{
+  "name": "prjkt",
+  "version": "1.0.0",
+  "description": "Docker project management tool",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "prjkt.sh",
+  "category": "docker",
+  "dependencies": {
+    "apt": ["docker.io", "dialog"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "prjkt",
+    "description": "Interactive Docker project manager with dialog-based menu for managing Docker compose projects.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "prjkt",
+        "description": "Launch interactive Docker project manager"
+      }
+    ]
+  }
+}

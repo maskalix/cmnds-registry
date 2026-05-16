@@ -1,0 +1,29 @@
+{
+  "name": "smartchck",
+  "version": "1.0.0",
+  "description": "Check SMART status of all drives",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "smartchck.sh",
+  "category": "files",
+  "dependencies": {
+    "apt": ["smartmontools"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "smartchck",
+    "description": "Displays SMART health status for all available drives in the system using smartctl.",
+    "options": [
+      {
+        "flag": "-h, --help",
+        "description": "Show this help message"
+      }
+    ],
+    "examples": [
+      {
+        "command": "smartchck",
+        "description": "Check SMART status of all drives"
+      }
+    ]
+  }
+}

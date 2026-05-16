@@ -1,0 +1,144 @@
+{
+  "plugins": [
+    {
+      "category": "system",
+      "description": "Quick apt package manager shortcuts",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/a-v1.0.0/a-1.0.0.tar.gz",
+      "name": "a",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker compose up with build",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/bicomposed-v1.0.0/bicomposed-1.0.0.tar.gz",
+      "name": "bicomposed",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker compose up in detached mode",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/composed-v1.0.0/composed-1.0.0.tar.gz",
+      "name": "composed",
+      "version": "1.0.0"
+    },
+    {
+      "category": "files",
+      "description": "Copy files from subfolders with progress tracking",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/cpc-v1.0.0/cpc-1.0.0.tar.gz",
+      "name": "cpc",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker compose command shortcuts",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/dc-v1.0.0/dc-1.0.0.tar.gz",
+      "name": "dc",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker compose down",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/decompose-v1.0.0/decompose-1.0.0.tar.gz",
+      "name": "decompose",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker compose up (interactive)",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/dockup-v1.0.0/dockup-1.0.0.tar.gz",
+      "name": "dockup",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Edit docker-compose.yml file",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/ecompose-v1.0.0/ecompose-1.0.0.tar.gz",
+      "name": "ecompose",
+      "version": "1.0.0"
+    },
+    {
+      "category": "files",
+      "description": "Create a directory and change into it",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/mcd-v1.0.0/mcd-1.0.0.tar.gz",
+      "name": "mcd",
+      "version": "1.0.0"
+    },
+    {
+      "category": "system",
+      "description": "System performance monitoring",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/perf-v1.0.0/perf-1.0.0.tar.gz",
+      "name": "perf",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker project management tool",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/prjkt-v1.0.0/prjkt-1.0.0.tar.gz",
+      "name": "prjkt",
+      "version": "1.0.0"
+    },
+    {
+      "category": "files",
+      "description": "Manage rclone remote mounts",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/rcmount-v1.0.0/rcmount-1.0.0.tar.gz",
+      "name": "rcmount",
+      "version": "1.0.0"
+    },
+    {
+      "category": "files",
+      "description": "Record/create executable script quickly with nano",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/rec-v1.0.0/rec-1.0.0.tar.gz",
+      "name": "rec",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker compose restart (down + up)",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/recompose-v1.0.0/recompose-1.0.0.tar.gz",
+      "name": "recompose",
+      "version": "1.0.0"
+    },
+    {
+      "category": "docker",
+      "description": "Docker registry management",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/reg-v1.0.0/reg-1.0.0.tar.gz",
+      "name": "reg",
+      "version": "1.0.0"
+    },
+    {
+      "category": "files",
+      "description": "Remount rclone remotes quickly",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/remount-v1.0.0/remount-1.0.0.tar.gz",
+      "name": "remount",
+      "version": "1.0.0"
+    },
+    {
+      "category": "revpro",
+      "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/revpro-v1.0.0/revpro-1.0.0.tar.gz",
+      "name": "revpro",
+      "version": "1.0.0"
+    },
+    {
+      "category": "files",
+      "description": "Check SMART status of all drives",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/smartchck-v1.0.0/smartchck-1.0.0.tar.gz",
+      "name": "smartchck",
+      "version": "1.0.0"
+    },
+    {
+      "category": "ssh",
+      "description": "Initialize SSH keys and configuration",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/ssh-init-v1.0.0/ssh-init-1.0.0.tar.gz",
+      "name": "ssh-init",
+      "version": "1.0.0"
+    },
+    {
+      "category": "system",
+      "description": "System update script",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/system-update-v1.0.0/system-update-1.0.0.tar.gz",
+      "name": "system-update",
+      "version": "1.0.0"
+    }
+  ]
+}

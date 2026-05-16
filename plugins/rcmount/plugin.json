@@ -1,0 +1,57 @@
+{
+  "name": "rcmount",
+  "version": "1.0.0",
+  "description": "Manage rclone remote mounts",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "rcmount.sh",
+  "category": "files",
+  "dependencies": {
+    "apt": ["rclone", "fuse"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "rcmount {update|start|stop|restart|state|edit}",
+    "description": "Manage rclone remote mounts. Update mount configuration from rclone remotes, start/stop/restart mounts, check mount status, or edit configuration file.",
+    "options": [
+      {
+        "flag": "update",
+        "description": "Update rcmount configuration from rclone list remotes"
+      },
+      {
+        "flag": "start",
+        "description": "Mount all configured rclone remotes"
+      },
+      {
+        "flag": "stop",
+        "description": "Unmount all rclone remotes"
+      },
+      {
+        "flag": "restart",
+        "description": "Restart all rclone mounts"
+      },
+      {
+        "flag": "state",
+        "description": "Show current mount status"
+      },
+      {
+        "flag": "edit",
+        "description": "Edit mount configuration file"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rcmount update",
+        "description": "Sync configuration with rclone remotes"
+      },
+      {
+        "command": "rcmount start",
+        "description": "Mount all configured remotes"
+      },
+      {
+        "command": "rcmount state",
+        "description": "Check which remotes are mounted"
+      }
+    ]
+  }
+}

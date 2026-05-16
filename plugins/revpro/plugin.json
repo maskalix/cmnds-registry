@@ -1,0 +1,25 @@
+{
+  "name": "revpro",
+  "version": "1.0.0",
+  "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support",
+  "author": "Martin Skalicky",
+  "type": "script",
+  "entry_point": "revpro.sh",
+  "category": "revpro",
+  "dependencies": {
+    "apt": ["nginx", "certbot"],
+    "plugins": [],
+    "optional_plugins": ["cert", "certgen"]
+  },
+  "help": {
+    "usage": "revpro <add|remove|list|reload> [args]",
+    "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from templates, integrates Let's Encrypt certificates, supports HTTP/3 and Authentik auth-proxy.",
+    "options": [
+      { "flag": "-h, --help", "description": "Show this help message" }
+    ],
+    "examples": [
+      { "command": "revpro add example.com container_name 8080", "description": "Add a new proxied site" },
+      { "command": "revpro list", "description": "List all managed sites" }
+    ]
+  }
+}
