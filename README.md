@@ -79,11 +79,20 @@ See `CONTRIBUTING.md`. Short version:
 3. Open a PR. CI validates the manifest, runs `go vet` + `go build`, packages the bundle.
 4. On merge, a maintainer tags `<plugin>-v<version>` and the release workflow uploads the cross-compiled tarballs.
 
-## Releasing
+## Publishing & releasing
+
+First push to GitHub:
+
+```bash
+bash scripts/push.sh              # creates the repo via gh if missing, pushes main
+bash scripts/push.sh --tag-all    # also tags every plugin at its plugin.json version
+```
+
+Single-plugin release:
 
 ```bash
 git tag reg-v2.0.0
 git push origin reg-v2.0.0
 ```
 
-The release job in `.github/workflows/validate.yml` cross-compiles every plugin for `linux/amd64` and `linux/arm64` and uploads the tarballs.
+The release job in `.github/workflows/validate.yml` cross-compiles every plugin for `linux/amd64` and `linux/arm64` and uploads the tarballs to the GitHub Release.
