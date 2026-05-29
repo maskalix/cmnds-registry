@@ -13,7 +13,9 @@
 // Config (via `cmnds config`):
 //
 //	REVPRO_ACME_EMAIL    ACME account email (required to issue)
-//	REVPRO_ACME_PORT     HTTP-01 challenge listen port (default 5002)
+//	REVPRO_ACME_WEBROOT  serve HTTP-01 from this webroot (preferred; the running
+//	                     nginx exposes <webroot>/.well-known/acme-challenge/)
+//	REVPRO_ACME_PORT     standalone HTTP-01 listen port if no webroot (default 5002)
 //	REVPRO_ACME_STAGING  "true" → Let's Encrypt staging CA
 //	REVPRO_ACME_DIR      account storage dir (default $REVPRO/acme)
 //	REVPRO_RENEW_DAYS    renew when fewer than N days remain (default 30)
@@ -39,6 +41,7 @@ import (
 	"github.com/go-acme/lego/v5/certificate"
 	"github.com/go-acme/lego/v5/challenge/http01"
 	"github.com/go-acme/lego/v5/lego"
+	"github.com/go-acme/lego/v5/providers/http/webroot"
 	"github.com/go-acme/lego/v5/registration"
 )
 
@@ -62,7 +65,8 @@ func (u *acmeUser) GetPrivateKey() crypto.Signer           { return u.key }
 // issuer holds the resolved ACME settings and the lego client.
 type issuer struct {
 	email    string
-	port     string
+	port     string // standalone HTTP-01 listen port (used when webroot is unset)
+	webroot  string // if set, serve HTTP-01 challenge from this webroot instead
 	staging  bool
 	acmeDir  string
 	certsSub string
@@ -91,6 +95,7 @@ func (c *proxyConfig) newIssuer() (*issuer, error) {
 	iss := &issuer{
 		email:    email,
 		port:     port,
+		webroot:  configRead("REVPRO_ACME_WEBROOT"),
 		staging:  boolConfig("REVPRO_ACME_STAGING"),
 		acmeDir:  acmeDir,
 		certsSub: c.certsSub,
@@ -139,8 +144,22 @@ func (iss *issuer) connect() error {
 	if err != nil {
 		return fmt.Errorf("lego client: %w", err)
 	}
-	if err := client.Challenge.SetHTTP01Provider(http01.NewProviderServer("", iss.port)); err != nil {
-		return fmt.Errorf("http-01 provider: %w", err)
+	// HTTP-01 challenge delivery: webroot (a dir the already-running nginx
+	// serves at /.well-known/acme-challenge/) is preferred when REVPRO_ACME_WEBROOT
+	// is set — it avoids binding a port that the reverseproxy container owns.
+	// Otherwise fall back to lego's standalone server on REVPRO_ACME_PORT.
+	if iss.webroot != "" {
+		prov, err := webroot.NewHTTPProvider(iss.webroot)
+		if err != nil {
+			return fmt.Errorf("webroot provider: %w", err)
+		}
+		if err := client.Challenge.SetHTTP01Provider(prov); err != nil {
+			return fmt.Errorf("http-01 webroot: %w", err)
+		}
+	} else {
+		if err := client.Challenge.SetHTTP01Provider(http01.NewProviderServer("", iss.port)); err != nil {
+			return fmt.Errorf("http-01 standalone: %w", err)
+		}
 	}
 	iss.client = client
 

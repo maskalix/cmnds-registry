@@ -906,7 +906,9 @@ Config variables (via 'cmnds config'):
   CERTS, CERTS_SUB    self-signed CA dir / per-cert output base
   HTTP3               "true" to emit HTTP/3 listeners
   REVPRO_ACME_EMAIL   ACME account email (required for issue/renew)
-  REVPRO_ACME_PORT    HTTP-01 challenge port (default 5002)
+  REVPRO_ACME_WEBROOT HTTP-01 webroot served by nginx (preferred; e.g.
+                      /revpro/letsencrypt) — avoids binding a port
+  REVPRO_ACME_PORT    standalone HTTP-01 port if no webroot (default 5002)
   REVPRO_ACME_STAGING "true" → Let's Encrypt staging CA
   REVPRO_ACME_DIR     ACME account storage (default $REVPRO/acme)
   REVPRO_RENEW_DAYS   renew when fewer than N days remain (default 30)
