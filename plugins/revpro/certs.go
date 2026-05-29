@@ -348,44 +348,52 @@ func (c *proxyConfig) renewCmd(args []string) {
 		}
 	}
 
-	runOnce := func() {
+	runOnce := func() int {
 		iss, err := c.newIssuer()
 		if err != nil {
 			fail0("%v", err)
-			return
+			return 1
 		}
 		sites := c.certSites()
-		renewed := 0
+		renewed, failed, skipped := 0, 0, 0
 		for _, s := range sites {
-			days, ok := iss.daysUntilExpiry(s.certName)
+			days, have := iss.daysUntilExpiry(s.certName)
 			switch {
-			case !ok:
+			case !have:
 				info("%s: no valid cert, issuing...", s.certName)
 			case days >= renewDays:
 				info("%s: %dd left (>= %dd) — skip", s.certName, days, renewDays)
+				skipped++
 				continue
 			default:
 				info("%s: %dd left (< %dd) — renewing...", s.certName, days, renewDays)
 			}
 			if err := iss.obtain(s.certName, s.sans); err != nil {
 				fail0("renew %s: %v", s.certName, err)
+				failed++
 				continue
 			}
 			ok2("Renewed %s", s.certName)
 			renewed++
 		}
+
 		if renewed > 0 {
-			info("%d cert(s) renewed — regenerating + reloading nginx", renewed)
+			info("%d renewed, %d skipped, %d failed — regenerating + reloading nginx", renewed, skipped, failed)
 			c.clean()
 			c.generate()
 			c.reload()
+		} else if failed > 0 {
+			fail0("%d cert(s) failed, %d up to date — nginx NOT reloaded", failed, skipped)
 		} else {
-			info("Nothing to renew.")
+			info("All %d cert(s) up to date — nothing to renew.", skipped)
 		}
+		return failed
 	}
 
 	if !daemon {
-		runOnce()
+		if runOnce() > 0 {
+			os.Exit(1)
+		}
 		return
 	}
 

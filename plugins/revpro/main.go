@@ -278,13 +278,43 @@ func (c *proxyConfig) mustSites() []site {
 }
 
 func (c *proxyConfig) generate() {
+	// A server block referencing a missing cert file makes nginx fail to start
+	// entirely (BIO_new_file ... no such file). Skip those sites and warn, so a
+	// not-yet-issued domain can't take the whole proxy down.
+	missing := map[string]bool{}
+	for _, name := range c.certFilesMissing() {
+		missing[name] = true
+	}
+
 	info("Generating configs for domains:")
 	fmt.Println("-----------------------")
+	skipped := 0
 	for _, s := range c.mustSites() {
+		if missing[s.certName] {
+			warn("skip %s — cert %q not found; run 'revpro issue'", s.fqdn, s.certName)
+			skipped++
+			continue
+		}
 		c.generateOne(s)
 	}
 	fmt.Println("-----------------------")
+	if skipped > 0 {
+		warn("%d site(s) skipped for missing certs — run 'revpro issue' then 'revpro regenerate'", skipped)
+	}
 	ok("Configs generated")
+}
+
+// certFilesMissing returns cert names whose .crt file is absent on disk. This is
+// a pure file check (no ACME/email needed) so generate stays usable offline.
+func (c *proxyConfig) certFilesMissing() []string {
+	probe := &issuer{certsSub: c.certsSub}
+	var missing []string
+	for _, s := range c.certSites() {
+		if _, ok := probe.daysUntilExpiry(s.certName); !ok {
+			missing = append(missing, s.certName)
+		}
+	}
+	return missing
 }
 
 // add appends a site line under the right ==domain group (creating the group
@@ -839,9 +869,12 @@ Usage:
   revpro <command> [args]
 
 Site configs (reads $REVPRO/sites.conf):
-  generate            Generate per-site nginx configs from sites.conf
+  generate            Generate per-site nginx configs from sites.conf.
+                      Sites whose cert is missing are SKIPPED (with a warning)
+                      so a not-yet-issued domain can't break nginx startup.
   regenerate [--renew]
-                      Clean, regenerate, then reload (--renew: renew due certs first)
+                      Clean, regenerate, then reload. --renew issues/renews due
+                      certs FIRST (recommended for a fresh domain).
   add <name> <domain.tld> <host:port> [flags] [--cert="name"]
                       Append a site under ==domain.tld and generate+reload it
                       (name '@' = apex; flags like +a -s -w; default www on)
