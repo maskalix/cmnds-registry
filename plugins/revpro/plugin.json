@@ -1,7 +1,7 @@
 {
   "name": "revpro",
-  "version": "2.1.0",
-  "description": "Nginx reverse proxy manager with ACME (Let's Encrypt) cert issuance, auto-renewal, and HTTP/3 support",
+  "version": "2.2.0",
+  "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, and HTTP/3 support",
   "author": "Martin Skalicky",
   "type": "binary",
   "entry_point": "revpro",
@@ -17,8 +17,9 @@
     "options": [
       { "flag": "generate", "description": "Generate per-site nginx configs from site-configs.conf" },
       { "flag": "regenerate [--renew]", "description": "Clean, regenerate, then reload (--renew renews due certs first)" },
-      { "flag": "add <domain> <container> <certificate>", "description": "Append a site and generate+reload it" },
-      { "flag": "list", "description": "List configured domains" },
+      { "flag": "add <name> <domain.tld> <host:port> [flags] [--cert=]", "description": "Append a site under ==domain.tld and generate+reload" },
+      { "flag": "list", "description": "List configured sites with resolved flags" },
+      { "flag": "convert", "description": "Convert legacy site-configs.conf → sites.conf (backs up old)" },
       { "flag": "issue [cert...]", "description": "Issue ACME certs for all sites (or named ones); covers domain + www.domain" },
       { "flag": "renew [--daemon]", "description": "Renew near-expiry certs then regenerate+reload; --daemon loops daily" },
       { "flag": "reload | restart", "description": "Reload or restart the reverseproxy container" },

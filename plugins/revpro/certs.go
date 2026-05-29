@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-acme/lego/v5/acme"
@@ -253,29 +254,37 @@ func (iss *issuer) daysUntilExpiry(certName string) (int, bool) {
 
 // ---------- subcommands ----------
 
-// site couples a domain with its target certificate name from site-configs.conf.
+// certSite couples a primary domain with its target certificate name, plus the
+// SAN list (domain + www. when the www flag is on).
 type certSite struct {
 	domain   string
 	certName string
+	sans     []string
 }
 
-// certSites parses site-configs.conf into (domain, certName) pairs, deduping by
-// certificate name (the first domain seen for a cert is the primary).
+// certSites resolves sites.conf into per-certificate issuance jobs, deduping by
+// certificate name. SANs aggregate every domain (and its www. variant if the
+// www flag is set) that maps to the same cert name.
 func (c *proxyConfig) certSites() []certSite {
-	seen := map[string]bool{}
-	var sites []certSite
-	c.eachSite(func(domain, _, certificate string) {
-		if certificate == "" || seen[certificate] {
-			return
+	index := map[string]*certSite{}
+	var order []string
+	for _, s := range c.mustSites() {
+		cs, ok := index[s.certName]
+		if !ok {
+			cs = &certSite{domain: s.fqdn, certName: s.certName}
+			index[s.certName] = cs
+			order = append(order, s.certName)
 		}
-		// A leading [L] marks local-only; strip it for the cert's CN.
-		if len(domain) >= 3 && domain[:3] == "[L]" {
-			domain = domain[3:]
+		cs.sans = append(cs.sans, s.fqdn)
+		if s.flags.www && !strings.HasPrefix(s.fqdn, "www.") {
+			cs.sans = append(cs.sans, "www."+s.fqdn)
 		}
-		seen[certificate] = true
-		sites = append(sites, certSite{domain: domain, certName: certificate})
-	})
-	return sites
+	}
+	out := make([]certSite, 0, len(order))
+	for _, name := range order {
+		out = append(out, *index[name])
+	}
+	return out
 }
 
 // issueCmd issues (or reissues) certs. With no args it processes every site in
@@ -307,9 +316,8 @@ func (c *proxyConfig) issueCmd(args []string) {
 
 	okCount, failCount := 0, 0
 	for _, s := range sites {
-		domains := []string{s.domain, "www." + s.domain}
-		info("Issuing %s for %v ...", s.certName, domains)
-		if err := iss.obtain(s.certName, domains); err != nil {
+		info("Issuing %s for %v ...", s.certName, s.sans)
+		if err := iss.obtain(s.certName, s.sans); err != nil {
 			fail0("issue %s: %v", s.certName, err)
 			failCount++
 			continue
@@ -359,8 +367,7 @@ func (c *proxyConfig) renewCmd(args []string) {
 			default:
 				info("%s: %dd left (< %dd) — renewing...", s.certName, days, renewDays)
 			}
-			domains := []string{s.domain, "www." + s.domain}
-			if err := iss.obtain(s.certName, domains); err != nil {
+			if err := iss.obtain(s.certName, s.sans); err != nil {
 				fail0("renew %s: %v", s.certName, err)
 				continue
 			}

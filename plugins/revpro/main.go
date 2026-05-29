@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bufio"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -64,6 +63,8 @@ func main() {
 		mustConfig().issueCmd(os.Args[2:])
 	case "renew":
 		mustConfig().renewCmd(os.Args[2:])
+	case "convert":
+		mustConfig().convertCmd()
 	case "add":
 		mustConfig().add(os.Args[2:])
 	case "list":
@@ -127,13 +128,14 @@ func run(name string, args ...string) error {
 // proxyConfig holds the resolved paths and flags the site-generation commands
 // need, mirroring the variables at the top of revpro.sh.
 type proxyConfig struct {
-	mainFolder    string
-	configFile    string
-	confDir       string
-	logDir        string
-	authProxyConf string
-	certsSub      string
-	http3         bool
+	mainFolder       string
+	configFile       string // sites.conf (v2 format)
+	legacyConfigFile string // site-configs.conf (input to 'convert')
+	confDir          string
+	logDir           string
+	authProxyConf    string
+	certsSub         string
+	http3            bool
 }
 
 func mustConfig() *proxyConfig {
@@ -142,58 +144,49 @@ func mustConfig() *proxyConfig {
 		fail("REVPRO folder is not configured — run 'cmnds config write REVPRO /path/to/revpro'")
 	}
 	return &proxyConfig{
-		mainFolder:    main,
-		configFile:    filepath.Join(main, "site-configs.conf"),
-		confDir:       filepath.Join(main, "conf"),
-		logDir:        filepath.Join(main, "logs"),
-		authProxyConf: "/etc/nginx/includes/authentik-proxy.conf",
-		certsSub:      configRead("CERTS_SUB"),
-		http3:         strings.EqualFold(configRead("HTTP3"), "true"),
+		mainFolder:       main,
+		configFile:       filepath.Join(main, "sites.conf"),
+		legacyConfigFile: filepath.Join(main, "site-configs.conf"),
+		confDir:          filepath.Join(main, "conf"),
+		logDir:           filepath.Join(main, "logs"),
+		authProxyConf:    "/etc/nginx/includes/authentik-proxy.conf",
+		certsSub:         configRead("CERTS_SUB"),
+		http3:            strings.EqualFold(configRead("HTTP3"), "true"),
 	}
 }
 
 // ---------- site config generation (revpro.sh) ----------
 
-// generateOne writes the per-site nginx config for one (domain, container,
-// certificate) triple. It reproduces the prefix grammar of the bash version:
-//
-//	leading "[L]" on the domain  → local-only (include local.conf)
-//	"s:" anywhere in container    → forward over https (else http)
-//	leading a:/s:/w: prefixes are stripped to get server:port
-//	"a:" / "a:s:" / "s:a:" prefix → authentik proxy block instead of location /
-func (c *proxyConfig) generateOne(domain, container, certificate string) {
-	confFile := filepath.Join(c.confDir, domain+".conf")
-	localOnly := false
-	if strings.HasPrefix(domain, "[L]") {
-		localOnly = true
-		domain = domain[3:]
-		confFile = filepath.Join(c.confDir, domain+".conf")
+// serverName builds the nginx server_name for a site, adding the www. variant
+// when the www flag is on (and the fqdn isn't already a www host).
+func (s site) serverName() string {
+	if s.flags.www && !strings.HasPrefix(s.fqdn, "www.") {
+		return s.fqdn + " www." + s.fqdn
 	}
+	return s.fqdn
+}
 
+// generateOne writes the per-site nginx config from a resolved site record.
+func (c *proxyConfig) generateOne(s site) {
+	confFile := filepath.Join(c.confDir, s.fqdn+".conf")
 	if err := os.MkdirAll(filepath.Dir(confFile), 0o755); err != nil {
 		fail("create conf dir: %v", err)
 	}
 
 	forwardScheme := "http"
-	if strings.Contains(container, "s:") {
+	if s.flags.https {
 		forwardScheme = "https"
 	}
 
-	// Strip any leading a:/s:/w: prefixes to recover server:port.
-	cleaned := container
-	for len(cleaned) >= 2 && strings.ContainsRune("asw", rune(cleaned[0])) && cleaned[1] == ':' {
-		cleaned = cleaned[2:]
-	}
-	server := cleaned
-	port := cleaned
-	if i := strings.LastIndex(cleaned, ":"); i >= 0 {
-		server = cleaned[:i]
-		port = cleaned[i+1:]
+	server := s.target
+	port := s.target
+	if i := strings.LastIndex(s.target, ":"); i >= 0 {
+		server = s.target[:i]
+		port = s.target[i+1:]
 	}
 
-	authentik := strings.HasPrefix(container, "a:") ||
-		strings.HasPrefix(container, "a:s:") ||
-		strings.HasPrefix(container, "s:a:")
+	domain := s.fqdn
+	cert := s.certName
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(`############
@@ -237,14 +230,14 @@ server {
     set $port %s;
     set $upstream $forward_scheme://$server:$port;
 `,
-		domain,
+		s.serverName(),
 		c.logDir, domain, c.logDir, domain,
-		c.certsSub, certificate, certificate,
-		c.certsSub, certificate, certificate,
-		c.certsSub, certificate, certificate,
+		c.certsSub, cert, cert,
+		c.certsSub, cert, cert,
+		c.certsSub, cert, cert,
 		forwardScheme, server, port))
 
-	if authentik {
+	if s.flags.auth {
 		b.WriteString(fmt.Sprintf("        \n    # Authentik proxy\n    include %s;\n}\n", c.authProxyConf))
 	} else {
 		b.WriteString("        \n    location / {\n")
@@ -252,7 +245,7 @@ server {
 			b.WriteString("        # HTTP/3 Support\n        include /etc/nginx/includes/http3.conf;\n")
 		}
 		b.WriteString("        \n        # Proxy\n        proxy_pass $upstream;\n        include /etc/nginx/includes/proxy.conf;\n")
-		if localOnly {
+		if s.flags.local {
 			b.WriteString("            \n        # Local access only\n        include /etc/nginx/includes/local.conf;\n")
 		}
 		b.WriteString("        \n        # Error redirect\n        include /etc/nginx/includes/error.conf;\n    }\n}\n")
@@ -275,73 +268,89 @@ func (c *proxyConfig) createLogFiles(domain string) {
 	}
 }
 
-// eachSite reads site-configs.conf and calls fn for every non-comment line.
-// Fields are whitespace-separated: domain, container, certificate.
-func (c *proxyConfig) eachSite(fn func(domain, container, certificate string)) {
-	f, err := os.Open(c.configFile)
+// mustSites parses sites.conf or aborts with the parse error.
+func (c *proxyConfig) mustSites() []site {
+	sites, err := c.parseSites()
 	if err != nil {
-		fail("Configuration file not found at %s", c.configFile)
+		fail("%v", err)
 	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
-		}
-		fn(fields[0], fields[1], fields[2])
-	}
+	return sites
 }
 
 func (c *proxyConfig) generate() {
 	info("Generating configs for domains:")
 	fmt.Println("-----------------------")
-	c.eachSite(c.generateOne)
+	for _, s := range c.mustSites() {
+		c.generateOne(s)
+	}
 	fmt.Println("-----------------------")
 	ok("Configs generated")
 }
 
+// add appends a site line under the right ==domain group (creating the group
+// if needed), then regenerates+reloads. Usage:
+//
+//	revpro add <name> <domain.tld> <host:port> [flags] [--cert="name"]
+//
+// e.g. revpro add api example.tld 10.0.0.2:8443 -a
 func (c *proxyConfig) add(args []string) {
-	if len(args) != 3 {
-		fail("Usage: revpro add <domain> <container> <certificate>")
+	if len(args) < 3 {
+		fail(`Usage: revpro add <name> <domain.tld> <host:port> [flags] [--cert="name"]`)
 	}
-	domain, container, certificate := args[0], args[1], args[2]
+	name, domain, target := args[0], args[1], args[2]
+	extra := strings.Join(args[3:], " ")
 
-	f, err := os.OpenFile(c.configFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		fail("open config: %v", err)
+	content, _ := os.ReadFile(c.configFile)
+	text := string(content)
+	header := "==" + domain
+	line := fmt.Sprintf("%-12s %-24s", name, target)
+	if extra != "" {
+		line += " " + extra
 	}
-	fmt.Fprintf(f, "%s    %s    %s\n", domain, container, certificate)
-	f.Close()
+	line = strings.TrimRight(line, " ")
 
-	c.generateOne(domain, container, certificate)
+	if idx := strings.Index(text, "\n"+header); idx >= 0 || strings.HasPrefix(text, header) {
+		// Group exists — append the line right after the header line.
+		lines := strings.Split(text, "\n")
+		out := make([]string, 0, len(lines)+1)
+		for _, l := range lines {
+			out = append(out, l)
+			if strings.TrimSpace(l) == header || strings.HasPrefix(strings.TrimSpace(l), header+" ") {
+				out = append(out, line)
+			}
+		}
+		text = strings.Join(out, "\n")
+	} else {
+		// New group at the end.
+		if text != "" && !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += fmt.Sprintf("\n%s\n%s\n", header, line)
+	}
+	if err := os.WriteFile(c.configFile, []byte(text), 0o644); err != nil {
+		fail("write %s: %v", c.configFile, err)
+	}
+
+	// Regenerate the affected site and reload.
+	fqdn := domain
+	if name != "@" {
+		fqdn = name + "." + domain
+	}
+	for _, s := range c.mustSites() {
+		if s.fqdn == fqdn {
+			c.generateOne(s)
+		}
+	}
 	c.reload()
 }
 
 func (c *proxyConfig) list() {
-	f, err := os.Open(c.configFile)
-	if err != nil {
-		fail("Configuration file not found at %s", c.configFile)
-	}
-	defer f.Close()
-
-	fmt.Printf("Listing all domains from %s (ignoring comments):\n", c.configFile)
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
+	for _, s := range c.mustSites() {
+		flags := flagTokens(s.flags)
+		if flags == "" {
+			flags = "(defaults)"
 		}
-		fields := strings.Fields(line)
-		if len(fields) > 0 {
-			fmt.Println(fields[0])
-		}
+		fmt.Printf("%-30s → %-22s %s\n", s.fqdn, s.target, flags)
 	}
 }
 
@@ -431,25 +440,36 @@ func (c *proxyConfig) initSetup() {
 	}
 	ok("Folder structure created successfully in %s.", c.mainFolder)
 
-	// site-configs.conf goes to the main folder; the rest of the embedded
-	// templates land in misc/ (matching revpro-init.sh).
+	// The nginx include templates land in misc/. site-configs.conf (the legacy
+	// format template) is skipped — sites.conf is written fresh below.
 	info("Writing template files...")
 	misc := filepath.Join(c.mainFolder, "misc")
 	entries, _ := fs.ReadDir(templates, "templates")
 	for _, e := range entries {
+		if e.Name() == "site-configs.conf" {
+			continue
+		}
 		data, err := templates.ReadFile("templates/" + e.Name())
 		if err != nil {
 			continue
 		}
-		dest := filepath.Join(misc, e.Name())
-		if e.Name() == "site-configs.conf" {
-			dest = filepath.Join(c.mainFolder, e.Name())
-		}
-		if err := os.WriteFile(dest, data, 0o644); err != nil {
-			warn("write %s: %v", dest, err)
+		if err := os.WriteFile(filepath.Join(misc, e.Name()), data, 0o644); err != nil {
+			warn("write %s: %v", filepath.Join(misc, e.Name()), err)
 		}
 	}
-	ok("Template files written.")
+
+	// Write a starter sites.conf (tutorial header + a commented example group)
+	// unless one already exists.
+	if _, err := os.Stat(c.configFile); err != nil {
+		starter := sitesTutorial + "\n" +
+			"# ==example.tld <+s>\n" +
+			"# @        10.0.0.1:8443\n" +
+			"# app      10.0.0.2:8080    -s\n"
+		if err := os.WriteFile(c.configFile, []byte(starter), 0o644); err != nil {
+			warn("write %s: %v", c.configFile, err)
+		}
+	}
+	ok("Template files written; starter %s ready.", c.configFile)
 }
 
 // ---------- cert inspection (cert.sh) ----------
@@ -818,18 +838,20 @@ func usage() {
 Usage:
   revpro <command> [args]
 
-Site configs (reads $REVPRO/site-configs.conf):
-  generate            Generate per-site nginx configs from site-configs.conf
+Site configs (reads $REVPRO/sites.conf):
+  generate            Generate per-site nginx configs from sites.conf
   regenerate [--renew]
                       Clean, regenerate, then reload (--renew: renew due certs first)
-  add <domain> <container> <certificate>
-                      Append a site and generate+reload it
-  list                List configured domains
+  add <name> <domain.tld> <host:port> [flags] [--cert="name"]
+                      Append a site under ==domain.tld and generate+reload it
+                      (name '@' = apex; flags like +a -s -w; default www on)
+  list                List configured sites with resolved flags
+  convert             Convert legacy site-configs.conf → sites.conf (backs up old)
   reload              docker exec reverseproxy nginx -s reload
   restart             docker restart reverseproxy
   clean               Wipe and recreate conf/ and logs/
-  edit                Open site-configs.conf in $EDITOR (default nano)
-  init setup|open     Create the folder structure / open the config
+  edit                Open sites.conf in $EDITOR (default nano)
+  init setup|open     Create the folder structure + starter sites.conf
 
 Certificates (ACME / Let's Encrypt via lego, HTTP-01):
   issue [cert...]     Issue certs for all sites (or only the named ones).
