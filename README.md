@@ -2,6 +2,9 @@
 
 Official plugin registry for [CMNDS](https://github.com/maskalix/cmnds-v2) v2+.
 
+> [!IMPORTANT]
+> LOT OF PLUGINS ARE CREATED USING CLAUDE CODE. I'M NOT ASHAMED, CREATING SIMPLE SCRIPTS FOR MANAGING IS WASTE OF TIME - YET CHECKING STILL MANUAL!
+
 The `cmnds` binary fetches `registry.json` from this repo to discover plugins. Each plugin lives in its own folder under `plugins/` and is shipped as a `.tar.gz` bundle through GitHub Releases.
 
 **Plugins are Go-first.** Bash is allowed but discouraged — Go gives single-binary distribution, type safety, and proper testing. Python is supported but reserved for cases where it's clearly better than Go (rare).
