@@ -51,10 +51,10 @@
     },
     {
       "category": "revpro",
-      "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support",
-      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/revpro-v2.0.0/revpro-2.0.0.tar.gz",
+      "description": "Nginx reverse proxy manager with ACME (Let's Encrypt) cert issuance, auto-renewal, and HTTP/3 support",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/revpro-v2.1.0/revpro-2.1.0.tar.gz",
       "name": "revpro",
-      "version": "2.0.0"
+      "version": "2.1.0"
     },
     {
       "category": "files",

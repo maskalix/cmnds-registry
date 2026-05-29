@@ -1,24 +1,26 @@
 {
   "name": "revpro",
-  "version": "2.0.0",
-  "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support",
+  "version": "2.1.0",
+  "description": "Nginx reverse proxy manager with ACME (Let's Encrypt) cert issuance, auto-renewal, and HTTP/3 support",
   "author": "Martin Skalicky",
   "type": "binary",
   "entry_point": "revpro",
   "category": "revpro",
   "dependencies": {
-    "apt": ["nginx", "certbot", "openssl"],
+    "apt": ["nginx", "openssl"],
     "plugins": [],
     "optional_plugins": []
   },
   "help": {
-    "usage": "revpro <generate|add|list|reload|restart|clean|regenerate|edit|init|cert|certgen|http> [args]",
-    "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from a site-configs.conf template, integrates Let's Encrypt certificates, supports HTTP/3 and Authentik auth-proxy. Bundles TLS helpers (cert inspection, self-signed cert generation) and an HTTP/2,3 checker.",
+    "usage": "revpro <generate|add|list|reload|restart|clean|regenerate|edit|init|issue|renew|cert|certgen|http> [args]",
+    "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from a site-configs.conf template, issues and auto-renews Let's Encrypt certificates via ACME (HTTP-01, lego), supports HTTP/3 and Authentik auth-proxy. Bundles TLS helpers (cert inspection, self-signed cert generation) and an HTTP/2,3 checker.",
     "options": [
       { "flag": "generate", "description": "Generate per-site nginx configs from site-configs.conf" },
-      { "flag": "regenerate", "description": "Clean, regenerate, then reload nginx" },
+      { "flag": "regenerate [--renew]", "description": "Clean, regenerate, then reload (--renew renews due certs first)" },
       { "flag": "add <domain> <container> <certificate>", "description": "Append a site and generate+reload it" },
       { "flag": "list", "description": "List configured domains" },
+      { "flag": "issue [cert...]", "description": "Issue ACME certs for all sites (or named ones); covers domain + www.domain" },
+      { "flag": "renew [--daemon]", "description": "Renew near-expiry certs then regenerate+reload; --daemon loops daily" },
       { "flag": "reload | restart", "description": "Reload or restart the reverseproxy container" },
       { "flag": "clean", "description": "Wipe and recreate conf/ and logs/" },
       { "flag": "edit", "description": "Open site-configs.conf in $EDITOR" },
@@ -29,7 +31,8 @@
     ],
     "examples": [
       { "command": "revpro add example.com 192.168.0.10:8080 example.com", "description": "Add a new proxied site" },
-      { "command": "revpro list", "description": "List all managed sites" },
+      { "command": "revpro issue", "description": "Issue Let's Encrypt certs for every site in the config" },
+      { "command": "revpro renew --daemon", "description": "Run a renewal loop that auto-renews and reloads nginx" },
       { "command": "revpro cert -d example.com -e -i", "description": "Show a live cert's expiry and issuer" }
     ]
   }

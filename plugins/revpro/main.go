@@ -50,9 +50,20 @@ func main() {
 		mustConfig().generate()
 	case "regenerate":
 		c := mustConfig()
+		// `regenerate --renew` first renews any near-expiry certs, then rebuilds.
+		for _, a := range os.Args[2:] {
+			if a == "--renew" {
+				c.renewCmd(nil)
+				return
+			}
+		}
 		c.clean()
 		c.generate()
 		c.reload()
+	case "issue":
+		mustConfig().issueCmd(os.Args[2:])
+	case "renew":
+		mustConfig().renewCmd(os.Args[2:])
 	case "add":
 		mustConfig().add(os.Args[2:])
 	case "list":
@@ -80,9 +91,9 @@ func main() {
 
 // ---------- shared helpers ----------
 
-func info(format string, a ...any)  { fmt.Printf(cBlue+"●"+cReset+" "+format+"\n", a...) }
-func ok(format string, a ...any)    { fmt.Printf(cGreen+"✓"+cReset+" "+format+"\n", a...) }
-func warn(format string, a ...any)  { fmt.Printf(cYellow+"⚠"+cReset+" "+format+"\n", a...) }
+func info(format string, a ...any) { fmt.Printf(cBlue+"●"+cReset+" "+format+"\n", a...) }
+func ok(format string, a ...any)   { fmt.Printf(cGreen+"✓"+cReset+" "+format+"\n", a...) }
+func warn(format string, a ...any) { fmt.Printf(cYellow+"⚠"+cReset+" "+format+"\n", a...) }
 func fail(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, cRed+"✗"+cReset+" "+format+"\n", a...)
 	os.Exit(1)
@@ -445,9 +456,9 @@ func (c *proxyConfig) initSetup() {
 
 func certInspect(args []string) {
 	var (
-		domain                                                                   string
+		domain                                                                  string
 		showExpiry, showIssuer, showSubject, showAll, verify, sslCheck, compare bool
-		caPath                                                                   string
+		caPath                                                                  string
 	)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -595,7 +606,7 @@ func fetchCertPEM(domain string) (string, error) {
 }
 
 func certUsage() {
-	fmt.Printf(cYellow+"Usage: revpro cert -d domain.tld [-e|-i|-s|-a|-v|-g|-comp --CA 'PATH']"+cReset+`
+	fmt.Printf(cYellow + "Usage: revpro cert -d domain.tld [-e|-i|-s|-a|-v|-g|-comp --CA 'PATH']" + cReset + `
     -d domain     : Specify the domain (required)
     -e            : Show certificate expiry date
     -i            : Show certificate issuer information
@@ -617,7 +628,7 @@ func certGen(args []string) {
 
 	var (
 		domain, wildcard, years, country, state, organization string
-		alts                                                   []string
+		alts                                                  []string
 	)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -809,7 +820,8 @@ Usage:
 
 Site configs (reads $REVPRO/site-configs.conf):
   generate            Generate per-site nginx configs from site-configs.conf
-  regenerate          Clean, regenerate, then reload
+  regenerate [--renew]
+                      Clean, regenerate, then reload (--renew: renew due certs first)
   add <domain> <container> <certificate>
                       Append a site and generate+reload it
   list                List configured domains
@@ -819,6 +831,13 @@ Site configs (reads $REVPRO/site-configs.conf):
   edit                Open site-configs.conf in $EDITOR (default nano)
   init setup|open     Create the folder structure / open the config
 
+Certificates (ACME / Let's Encrypt via lego, HTTP-01):
+  issue [cert...]     Issue certs for all sites (or only the named ones).
+                      Each cert covers <domain> + www.<domain>, written to
+                      $CERTS_SUB/<cert>/<cert>.{crt,key,issuer.crt}.
+  renew [--daemon]    Renew certs within the renew window, then regenerate+reload.
+                      --daemon loops, checking once a day.
+
 TLS helpers:
   cert -d <domain> [-e|-i|-s|-a|-v|-g|-comp --CA path]
                       Inspect/verify a live certificate (openssl)
@@ -827,6 +846,14 @@ TLS helpers:
                       Generate a self-signed root CA + server cert
   http <2|3> <url>    Check HTTP/2 or HTTP/3 support
 
-Config variables (via 'cmnds config'): REVPRO, CERTS, CERTS_SUB, HTTP3
+Config variables (via 'cmnds config'):
+  REVPRO              base folder (site-configs.conf, conf/, logs/, acme/)
+  CERTS, CERTS_SUB    self-signed CA dir / per-cert output base
+  HTTP3               "true" to emit HTTP/3 listeners
+  REVPRO_ACME_EMAIL   ACME account email (required for issue/renew)
+  REVPRO_ACME_PORT    HTTP-01 challenge port (default 5002)
+  REVPRO_ACME_STAGING "true" → Let's Encrypt staging CA
+  REVPRO_ACME_DIR     ACME account storage (default $REVPRO/acme)
+  REVPRO_RENEW_DAYS   renew when fewer than N days remain (default 30)
 `)
 }
