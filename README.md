@@ -16,10 +16,14 @@ cmnds-registry/
 │   │   ├── plugin.json        # Manifest (type: "binary")
 │   │   ├── main.go            # Source
 │   │   └── go.mod
-│   ├── revpro/                # v1 bash plugin (Go rewrite pending)
+│   ├── revpro/                # Go plugin with embedded nginx templates
+│   │   ├── plugin.json        # type: "binary"
+│   │   ├── main.go
+│   │   ├── go.mod
+│   │   └── templates/...      # go:embed'd into the binary
+│   ├── prjkt/                 # v1 bash plugin (Go rewrite pending)
 │   │   ├── plugin.json        # type: "script"
-│   │   ├── revpro.sh
-│   │   └── template/...
+│   │   └── prjkt.sh
 │   └── ...
 └── .github/workflows/
     └── validate.yml           # CI: validates on push/PR; builds + publishes a
@@ -47,8 +51,8 @@ cmnds-registry/
 | smartchck | binary (Go) | ✅ |
 | ssh-init | binary (Go) | ✅ |
 | system-update | binary (Go) | ✅ |
+| revpro | binary (Go) | ✅ |
 | prjkt | script (bash) | ⚠ v1 — Go rewrite pending |
-| revpro | script (bash) | ⚠ v1 — Go rewrite pending |
 
 ## Installing a plugin (end user)
 

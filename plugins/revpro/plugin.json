@@ -1,25 +1,36 @@
 {
   "name": "revpro",
-  "version": "1.0.0",
-  "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support (v1 bash — Go rewrite pending)",
+  "version": "2.0.0",
+  "description": "Nginx reverse proxy manager with Let's Encrypt and HTTP/3 support",
   "author": "Martin Skalicky",
-  "type": "script",
-  "entry_point": "revpro.sh",
+  "type": "binary",
+  "entry_point": "revpro",
   "category": "revpro",
   "dependencies": {
-    "apt": ["nginx", "certbot"],
+    "apt": ["nginx", "certbot", "openssl"],
     "plugins": [],
-    "optional_plugins": ["cert", "certgen"]
+    "optional_plugins": []
   },
   "help": {
-    "usage": "revpro <add|remove|list|reload> [args]",
-    "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from templates, integrates Let's Encrypt certificates, supports HTTP/3 and Authentik auth-proxy.",
+    "usage": "revpro <generate|add|list|reload|restart|clean|regenerate|edit|init|cert|certgen|http> [args]",
+    "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from a site-configs.conf template, integrates Let's Encrypt certificates, supports HTTP/3 and Authentik auth-proxy. Bundles TLS helpers (cert inspection, self-signed cert generation) and an HTTP/2,3 checker.",
     "options": [
-      { "flag": "-h, --help", "description": "Show this help message" }
+      { "flag": "generate", "description": "Generate per-site nginx configs from site-configs.conf" },
+      { "flag": "regenerate", "description": "Clean, regenerate, then reload nginx" },
+      { "flag": "add <domain> <container> <certificate>", "description": "Append a site and generate+reload it" },
+      { "flag": "list", "description": "List configured domains" },
+      { "flag": "reload | restart", "description": "Reload or restart the reverseproxy container" },
+      { "flag": "clean", "description": "Wipe and recreate conf/ and logs/" },
+      { "flag": "edit", "description": "Open site-configs.conf in $EDITOR" },
+      { "flag": "init setup|open", "description": "Create the folder structure / open the config" },
+      { "flag": "cert -d <domain> [...]", "description": "Inspect/verify a live certificate" },
+      { "flag": "certgen -d <domain> ...", "description": "Generate a self-signed root CA + server cert" },
+      { "flag": "http <2|3> <url>", "description": "Check HTTP/2 or HTTP/3 support" }
     ],
     "examples": [
-      { "command": "revpro add example.com container_name 8080", "description": "Add a new proxied site" },
-      { "command": "revpro list", "description": "List all managed sites" }
+      { "command": "revpro add example.com 192.168.0.10:8080 example.com", "description": "Add a new proxied site" },
+      { "command": "revpro list", "description": "List all managed sites" },
+      { "command": "revpro cert -d example.com -e -i", "description": "Show a live cert's expiry and issuer" }
     ]
   }
 }
