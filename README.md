@@ -21,11 +21,9 @@ cmnds-registry/
 │   │   ├── revpro.sh
 │   │   └── template/...
 │   └── ...
-├── scripts/
-│   ├── build-registry.sh      # Regenerates registry.json from manifests
-│   └── build-bundles.sh       # Compiles Go plugins, packs all to releases/*.tar.gz
 └── .github/workflows/
-    └── validate.yml           # CI: validates + builds + releases per (linux × amd64/arm64)
+    └── validate.yml           # CI: validates on push/PR; builds + publishes a
+                               #     release asset on each <name>-v<version> tag
 ```
 
 ## Plugin types
@@ -75,24 +73,35 @@ cmnds search
 See `CONTRIBUTING.md`. Short version:
 
 1. `mkdir plugins/<name>` with `plugin.json`, `main.go`, `go.mod`.
-2. `bash scripts/build-registry.sh` to refresh the index.
-3. Open a PR. CI validates the manifest, runs `go vet` + `go build`, packages the bundle.
-4. On merge, a maintainer tags `<plugin>-v<version>` and the release workflow uploads the cross-compiled tarballs.
+2. Add a matching entry to `registry.json` (name, version, description, category,
+   and `download_url` of the form
+   `https://github.com/maskalix/cmnds-registry/releases/download/<name>-v<version>/<name>-<version>.tar.gz`).
+3. Open a PR. CI validates the manifest and runs `go vet` + `go build`.
+4. On merge, a maintainer tags `<name>-v<version>` (below) and the release workflow publishes the bundle.
 
 ## Publishing & releasing
 
-First push to GitHub:
-
-```bash
-bash scripts/push.sh              # creates the repo via gh if missing, pushes main
-bash scripts/push.sh --tag-all    # also tags every plugin at its plugin.json version
-```
-
-Single-plugin release:
+A release is cut **per plugin** by pushing a version tag. The `release` job in
+`.github/workflows/validate.yml` fires on any `<name>-v<version>` tag, builds
+that one plugin into `<name>-<version>.tar.gz` (binary plugins → a static
+`linux/amd64` binary; script/python → all source files), and uploads it as the
+tag's release asset — the exact URL `registry.json` points at.
 
 ```bash
 git tag reg-v2.0.0
-git push origin reg-v2.0.0
+git push origin reg-v2.0.0          # → workflow publishes reg-2.0.0.tar.gz
 ```
 
-The release job in `.github/workflows/validate.yml` cross-compiles every plugin for `linux/amd64` and `linux/arm64` and uploads the tarballs to the GitHub Release.
+To (re)release every plugin at its current `plugin.json` version:
+
+```bash
+for d in plugins/*/; do
+  name=$(basename "$d"); ver=$(jq -r .version "$d/plugin.json")
+  git tag "${name}-v${ver}" 2>/dev/null && echo "tagged ${name}-v${ver}"
+done
+git push origin --tags
+```
+
+> **Architecture note:** bundles are `linux/amd64` only — `registry.json` has a
+> single `download_url` per plugin. Supporting arm64 would require per-arch URLs
+> in the schema and arch-aware selection in the downloader.
