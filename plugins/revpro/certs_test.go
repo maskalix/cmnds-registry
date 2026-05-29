@@ -187,3 +187,32 @@ auth.example.tld     a:s:192.168.0.12:9000 auth.example.tld
 		t.Errorf("expected legacy file to be renamed away")
 	}
 }
+
+// Regression: a saved account.json must be loaded onto the user BEFORE the lego
+// client is built, so the KID (reg.Location) is present. This checks the load
+// step restores Location; the ordering itself is enforced in connect().
+func TestLoadSavedAccount(t *testing.T) {
+	dir := t.TempDir()
+	iss := &issuer{acmeDir: dir, email: "x@y.z"}
+	iss.user = &acmeUser{email: "x@y.z"}
+
+	// No file yet → false.
+	if iss.loadSavedAccount() {
+		t.Fatal("expected false with no account.json")
+	}
+	// Write an account with a Location (the KID source).
+	os.WriteFile(iss.accountRegPath(),
+		[]byte(`{"accountURL":"https://acme.example/acct/123","status":"valid"}`), 0o600)
+	if !iss.loadSavedAccount() {
+		t.Fatal("expected true after writing account.json")
+	}
+	if iss.user.GetRegistration() == nil || iss.user.GetRegistration().Location != "https://acme.example/acct/123" {
+		t.Fatalf("KID/location not restored: %+v", iss.user.reg)
+	}
+	// A registration without Location must be treated as unusable.
+	os.WriteFile(iss.accountRegPath(), []byte(`{"status":"valid"}`), 0o600)
+	iss.user.reg = nil
+	if iss.loadSavedAccount() {
+		t.Fatal("expected false when Location empty")
+	}
+}

@@ -1,6 +1,6 @@
 {
   "name": "revpro",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, and HTTP/3 support",
   "author": "Martin Skalicky",
   "type": "binary",

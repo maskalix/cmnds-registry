@@ -108,6 +108,12 @@ func boolConfig(name string) bool {
 
 // connect loads or creates the ACME account and builds the lego client with a
 // standalone HTTP-01 provider.
+//
+// Order matters: lego.NewClient captures the account Key ID (KID) from
+// user.GetRegistration().Location at creation time (see lego/client.go). So a
+// previously-saved registration MUST be loaded onto the user *before* the
+// client is built — otherwise every signed request goes out with no KID and
+// the CA rejects it ("No Key ID in JWS header").
 func (iss *issuer) connect() error {
 	if err := os.MkdirAll(iss.acmeDir, 0o700); err != nil {
 		return fmt.Errorf("create acme dir: %w", err)
@@ -118,6 +124,9 @@ func (iss *issuer) connect() error {
 		return err
 	}
 	iss.user = &acmeUser{email: iss.email, key: key}
+
+	// Load any saved registration first so the KID is present at client build.
+	saved := iss.loadSavedAccount()
 
 	cfg := lego.NewConfig(iss.user)
 	if iss.staging {
@@ -135,7 +144,25 @@ func (iss *issuer) connect() error {
 	}
 	iss.client = client
 
-	return iss.loadOrRegister()
+	if saved {
+		return nil
+	}
+	return iss.register()
+}
+
+// loadSavedAccount restores a persisted registration onto iss.user and reports
+// whether a usable one was found.
+func (iss *issuer) loadSavedAccount() bool {
+	data, err := os.ReadFile(iss.accountRegPath())
+	if err != nil {
+		return false
+	}
+	var reg acme.ExtendedAccount
+	if json.Unmarshal(data, &reg) != nil || reg.Location == "" {
+		return false
+	}
+	iss.user.reg = &reg
+	return true
 }
 
 func (iss *issuer) accountKeyPath() string { return filepath.Join(iss.acmeDir, "account.key") }
@@ -170,17 +197,10 @@ func (iss *issuer) loadOrCreateAccountKey() (crypto.Signer, error) {
 	return k, nil
 }
 
-// loadOrRegister restores a saved registration or registers a new account
-// (accepting the ACME terms of service) and persists it.
-func (iss *issuer) loadOrRegister() error {
-	if data, err := os.ReadFile(iss.accountRegPath()); err == nil {
-		var reg acme.ExtendedAccount
-		if json.Unmarshal(data, &reg) == nil && reg.Location != "" {
-			iss.user.reg = &reg
-			return nil
-		}
-	}
-
+// register creates a new ACME account (accepting the terms of service) and
+// persists it. Register() sets the KID on the client core internally, so it is
+// safe to call after the client is built.
+func (iss *issuer) register() error {
 	info("Registering ACME account for %s...", iss.email)
 	reg, err := iss.client.Registration.Register(context.Background(),
 		registration.RegisterOptions{TermsOfServiceAgreed: true})
