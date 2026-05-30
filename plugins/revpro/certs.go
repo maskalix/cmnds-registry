@@ -154,9 +154,6 @@ func (iss *issuer) connect() error {
 	saved := iss.loadSavedAccount()
 
 	cfg := lego.NewConfig(iss.user)
-	// lego v5 no longer defaults the cert key type; without it the final
-	// certificate request fails with "the key type is missing".
-	cfg.KeyType = keyType()
 	if iss.staging {
 		cfg.CADirURL = lego.DirectoryURLLetsEncryptStaging
 	} else {
@@ -259,9 +256,12 @@ func (iss *issuer) register() error {
 // obtain issues a certificate for the given domains and writes the three files
 // under $CERTS_SUB/<certName>/.
 func (iss *issuer) obtain(certName string, domains []string) error {
+	// lego v5 no longer defaults the cert key type; without KeyType the request
+	// fails with "the key type is missing" even after validation succeeds.
 	res, err := iss.client.Certificate.Obtain(context.Background(), certificate.ObtainRequest{
 		Domains: domains,
 		Bundle:  true,
+		KeyType: keyType(),
 	})
 	if err != nil {
 		return err
