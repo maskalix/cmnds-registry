@@ -52,9 +52,9 @@
     {
       "category": "revpro",
       "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, and HTTP/3 support",
-      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/revpro-v2.3.0/revpro-2.3.0.tar.gz",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/revpro-v2.4.0/revpro-2.4.0.tar.gz",
       "name": "revpro",
-      "version": "2.3.0"
+      "version": "2.4.0"
     },
     {
       "category": "files",

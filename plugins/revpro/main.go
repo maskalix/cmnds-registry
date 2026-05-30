@@ -23,7 +23,7 @@ import (
 	"strings"
 )
 
-//go:embed templates/*.conf
+//go:embed templates/*.conf templates/docker-compose.yml
 var templates embed.FS
 
 // ANSI colors, matching the bash scripts' palette.
@@ -65,6 +65,8 @@ func main() {
 		mustConfig().renewCmd(os.Args[2:])
 	case "convert":
 		mustConfig().convertCmd()
+	case "compose":
+		mustConfig().composeCmd()
 	case "add":
 		mustConfig().add(os.Args[2:])
 	case "list":
@@ -470,8 +472,10 @@ func (c *proxyConfig) initSetup() {
 	}
 	ok("Folder structure created successfully in %s.", c.mainFolder)
 
-	// The nginx include templates land in misc/. site-configs.conf (the legacy
-	// format template) is skipped — sites.conf is written fresh below.
+	// The nginx include templates (*.conf) land in misc/. site-configs.conf (the
+	// legacy format template) is skipped — sites.conf is written fresh below.
+	// reverseproxy.yml goes to the main folder (it's a compose file, not an
+	// nginx include).
 	info("Writing template files...")
 	misc := filepath.Join(c.mainFolder, "misc")
 	entries, _ := fs.ReadDir(templates, "templates")
@@ -483,10 +487,17 @@ func (c *proxyConfig) initSetup() {
 		if err != nil {
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(misc, e.Name()), data, 0o644); err != nil {
-			warn("write %s: %v", filepath.Join(misc, e.Name()), err)
+		dest := filepath.Join(misc, e.Name())
+		if e.Name() == "docker-compose.yml" {
+			dest = filepath.Join(c.mainFolder, e.Name())
+		}
+		if err := os.WriteFile(dest, data, 0o644); err != nil {
+			warn("write %s: %v", dest, err)
 		}
 	}
+
+	// The ACME HTTP-01 webroot must exist and be served by nginx on :80.
+	_ = os.MkdirAll(filepath.Join(c.mainFolder, "letsencrypt"), 0o755)
 
 	// Write a starter sites.conf (tutorial header + a commented example group)
 	// unless one already exists.
@@ -500,6 +511,26 @@ func (c *proxyConfig) initSetup() {
 		}
 	}
 	ok("Template files written; starter %s ready.", c.configFile)
+}
+
+// composeCmd writes the bundled docker-compose.yml to $REVPRO/docker-compose.yml
+// (if not already present) and prints its path, so the user can copy it to
+// wherever they run docker compose from.
+func (c *proxyConfig) composeCmd() {
+	dest := filepath.Join(c.mainFolder, "docker-compose.yml")
+	if _, err := os.Stat(dest); err != nil {
+		data, derr := templates.ReadFile("templates/docker-compose.yml")
+		if derr != nil {
+			fail("embedded docker-compose.yml missing: %v", derr)
+		}
+		if werr := os.WriteFile(dest, data, 0o644); werr != nil {
+			fail("write %s: %v", dest, werr)
+		}
+		ok("Wrote %s", dest)
+	}
+	fmt.Println(dest)
+	info("Copy this compose file where you run docker, then: docker compose up -d")
+	info("It binds :80 (ACME challenge + http→https redirect) and :443 (proxy).")
 }
 
 // ---------- cert inspection (cert.sh) ----------
@@ -880,6 +911,7 @@ Site configs (reads $REVPRO/sites.conf):
                       (name '@' = apex; flags like +a -s -w; default www on)
   list                List configured sites with resolved flags
   convert             Convert legacy site-configs.conf → sites.conf (backs up old)
+  compose             Write/print the bundled docker-compose.yml path to copy
   reload              docker exec reverseproxy nginx -s reload
   restart             docker restart reverseproxy
   clean               Wipe and recreate conf/ and logs/
