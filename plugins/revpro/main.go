@@ -922,8 +922,19 @@ Certificates (ACME / Let's Encrypt via lego, HTTP-01):
   issue [cert...]     Issue certs for all sites (or only the named ones).
                       Each cert covers <domain> + www.<domain>, written to
                       $CERTS_SUB/<cert>/<cert>.{crt,key,issuer.crt}.
+                      Binds :80 directly to answer the challenge (works even
+                      when the reverseproxy container is down — breaks the
+                      "nginx needs a cert, cert needs nginx" deadlock). Free
+                      :80 first: docker compose stop reverseproxy.
   renew [--daemon]    Renew certs within the renew window, then regenerate+reload.
                       --daemon loops, checking once a day.
+
+Bootstrapping a brand-new domain (no cert yet):
+  1) docker compose stop reverseproxy     # free :80
+  2) revpro issue                         # revpro answers HTTP-01 on :80
+  3) docker compose up -d reverseproxy    # certs exist → nginx starts
+  Once running, set REVPRO_ACME_WEBROOT=/revpro/letsencrypt so future renews
+  use the running nginx (no need to stop it).
 
 TLS helpers:
   cert -d <domain> [-e|-i|-s|-a|-v|-g|-comp --CA path]
@@ -938,9 +949,11 @@ Config variables (via 'cmnds config'):
   CERTS, CERTS_SUB    self-signed CA dir / per-cert output base
   HTTP3               "true" to emit HTTP/3 listeners
   REVPRO_ACME_EMAIL   ACME account email (required for issue/renew)
-  REVPRO_ACME_WEBROOT HTTP-01 webroot served by nginx (preferred; e.g.
-                      /revpro/letsencrypt) — avoids binding a port
-  REVPRO_ACME_PORT    standalone HTTP-01 port if no webroot (default 5002)
+  REVPRO_ACME_WEBROOT HTTP-01 webroot served by the RUNNING nginx (best for
+                      renewals once up; e.g. /revpro/letsencrypt). If unset,
+                      revpro binds the port below directly.
+  REVPRO_ACME_PORT    standalone HTTP-01 port (default 80 — the port LE uses;
+                      lets first issuance work with nginx down)
   REVPRO_ACME_STAGING "true" → Let's Encrypt staging CA
   REVPRO_ACME_DIR     ACME account storage (default $REVPRO/acme)
   REVPRO_RENEW_DAYS   renew when fewer than N days remain (default 30)

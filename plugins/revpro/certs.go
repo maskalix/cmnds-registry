@@ -46,7 +46,11 @@ import (
 )
 
 const (
-	defaultACMEPort  = "5002"
+	// Default to :80 — the port Let's Encrypt always uses for HTTP-01. With the
+	// standalone solver on :80, issuance works even when the reverseproxy
+	// container is down (it can't start until its certs exist), breaking the
+	// nginx-needs-cert-needs-nginx deadlock for a first issuance.
+	defaultACMEPort  = "80"
 	defaultRenewDays = 30
 )
 
