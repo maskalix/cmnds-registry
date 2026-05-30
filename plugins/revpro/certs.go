@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/go-acme/lego/v5/acme"
+	"github.com/go-acme/lego/v5/certcrypto"
 	"github.com/go-acme/lego/v5/certificate"
 	"github.com/go-acme/lego/v5/challenge/http01"
 	"github.com/go-acme/lego/v5/lego"
@@ -110,6 +111,21 @@ func (c *proxyConfig) newIssuer() (*issuer, error) {
 	return iss, nil
 }
 
+// keyType resolves the cert key type from REVPRO_ACME_KEYTYPE
+// (ec256|ec384|rsa2048|rsa4096), defaulting to EC256.
+func keyType() certcrypto.KeyType {
+	switch strings.ToLower(configRead("REVPRO_ACME_KEYTYPE")) {
+	case "rsa2048":
+		return certcrypto.RSA2048
+	case "rsa4096":
+		return certcrypto.RSA4096
+	case "ec384":
+		return certcrypto.EC384
+	default:
+		return certcrypto.EC256
+	}
+}
+
 func boolConfig(name string) bool {
 	v := configRead(name)
 	return v == "true" || v == "1" || v == "yes"
@@ -138,6 +154,9 @@ func (iss *issuer) connect() error {
 	saved := iss.loadSavedAccount()
 
 	cfg := lego.NewConfig(iss.user)
+	// lego v5 no longer defaults the cert key type; without it the final
+	// certificate request fails with "the key type is missing".
+	cfg.KeyType = keyType()
 	if iss.staging {
 		cfg.CADirURL = lego.DirectoryURLLetsEncryptStaging
 	} else {
