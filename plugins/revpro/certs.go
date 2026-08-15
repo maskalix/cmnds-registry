@@ -349,18 +349,38 @@ func (c *proxyConfig) certSites() []certSite {
 	return out
 }
 
-// issueCmd issues (or reissues) certs. With no args it processes every site in
-// the config; otherwise only the named certificates.
+// issueCmd issues certs. By default it only issues certs that are missing or
+// within the renew window — existing, still-valid certs are skipped so a casual
+// `revpro issue` can't burn ACME rate limits on fresh certs. Pass --force to
+// reissue everything regardless of expiry. With positional names it limits the
+// run to those certificates; otherwise it processes every site in the config.
 func (c *proxyConfig) issueCmd(args []string) {
+	force := false
+	var names []string
+	for _, a := range args {
+		if a == "--force" || a == "-f" {
+			force = true
+			continue
+		}
+		names = append(names, a)
+	}
+
 	iss, err := c.newIssuer()
 	if err != nil {
 		fail("%v", err)
 	}
 
+	renewDays := defaultRenewDays
+	if v := configRead("REVPRO_RENEW_DAYS"); v != "" {
+		if n := atoiSafe(v); n > 0 {
+			renewDays = n
+		}
+	}
+
 	sites := c.certSites()
-	if len(args) > 0 {
+	if len(names) > 0 {
 		want := map[string]bool{}
-		for _, a := range args {
+		for _, a := range names {
 			want[a] = true
 		}
 		var filtered []certSite
@@ -376,8 +396,16 @@ func (c *proxyConfig) issueCmd(args []string) {
 		return
 	}
 
-	okCount, failCount := 0, 0
+	okCount, failCount, skipCount := 0, 0, 0
 	for _, s := range sites {
+		if !force {
+			// Skip certs that already exist and aren't near expiry.
+			if days, have := iss.daysUntilExpiry(s.certName); have && days >= renewDays {
+				info("%s: %dd left (>= %dd) — skip (use --force to reissue)", s.certName, days, renewDays)
+				skipCount++
+				continue
+			}
+		}
 		info("Issuing %s for %v ...", s.certName, s.sans)
 		if err := iss.obtain(s.certName, s.sans); err != nil {
 			fail0("issue %s: %v", s.certName, err)
@@ -387,7 +415,7 @@ func (c *proxyConfig) issueCmd(args []string) {
 		ok("Issued %s → %s/%s/", s.certName, iss.certsSub, s.certName)
 		okCount++
 	}
-	fmt.Printf("\nIssued %d, failed %d\n", okCount, failCount)
+	fmt.Printf("\nIssued %d, skipped %d, failed %d\n", okCount, skipCount, failCount)
 	if failCount > 0 {
 		os.Exit(1)
 	}
