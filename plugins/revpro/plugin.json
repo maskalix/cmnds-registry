@@ -12,13 +12,14 @@
     "optional_plugins": []
   },
   "help": {
-    "usage": "revpro <generate|add|list|reload|restart|clean|regenerate|edit|init|issue|renew|cert|certgen|http> [args]",
+    "usage": "revpro <generate|add|list|analyze|reload|restart|clean|regenerate|edit|init|issue|renew|cert|certgen|http> [args]",
     "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from a site-configs.conf template, issues and auto-renews Let's Encrypt certificates via ACME (HTTP-01, lego), supports HTTP/3 and Authentik auth-proxy. Bundles TLS helpers (cert inspection, self-signed cert generation) and an HTTP/2,3 checker.",
     "options": [
       { "flag": "generate", "description": "Generate per-site nginx configs from site-configs.conf" },
       { "flag": "regenerate [--renew]", "description": "Clean, regenerate, then reload (--renew renews due certs first)" },
       { "flag": "add <name> <domain.tld> <host:port> [flags] [--cert=]", "description": "Append a site under ==domain.tld and generate+reload" },
-      { "flag": "list", "description": "List configured sites with resolved flags" },
+      { "flag": "list", "description": "List configured sites with resolved flags, plus recognized manual configs in $REVPRO/manconf" },
+      { "flag": "analyze [name...]", "description": "Verify configs work: cert present/fresh, generated conf up to date, upstream reachable, nginx -t passes" },
       { "flag": "convert", "description": "Convert legacy site-configs.conf → sites.conf (backs up old)" },
       { "flag": "issue [cert...]", "description": "Issue ACME certs for all sites (or named ones); covers domain + www.domain" },
       { "flag": "renew [--daemon]", "description": "Renew near-expiry certs then regenerate+reload; --daemon loops daily" },

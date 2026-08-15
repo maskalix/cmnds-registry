@@ -148,6 +148,121 @@ func TestDaysUntilExpiry(t *testing.T) {
 	}
 }
 
+func TestPurgeContentsKeepsDir(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "conf")
+	sub := filepath.Join(target, "sub")
+	os.MkdirAll(sub, 0o755)
+	os.WriteFile(filepath.Join(target, "a.conf"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(sub, "b.conf"), []byte("y"), 0o644)
+
+	// Record identity so we can prove neither dir was deleted and recreated —
+	// a recreated dir would orphan a docker bind mount pinned to the old inode
+	// until the container restarts.
+	beforeTarget, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeSub, err := os.Stat(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := purgeContents(target); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatalf("dir should still exist: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "sub" {
+		t.Fatalf("expected only the (now-empty) 'sub' subdir to remain, got %v", entries)
+	}
+	subEntries, err := os.ReadDir(sub)
+	if err != nil {
+		t.Fatalf("sub dir should still exist: %v", err)
+	}
+	if len(subEntries) != 0 {
+		t.Errorf("expected sub dir emptied of files, got %d entries", len(subEntries))
+	}
+
+	afterTarget, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(beforeTarget, afterTarget) {
+		t.Error("target directory was recreated, expected same inode preserved")
+	}
+	afterSub, err := os.Stat(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(beforeSub, afterSub) {
+		t.Error("nested 'sub' directory was recreated, expected same inode preserved (this is the bind-mount bug)")
+	}
+}
+
+// TestPurgeContentsPreservesBindMountedSubdirs reproduces 'revpro init setup'
+// re-running purgeContents over an existing $REVPRO whose conf/, manconf/,
+// misc/ and logs/ children are each bind-mounted separately into the
+// reverseproxy container (see templates/docker-compose.yml). Those
+// subdirectory inodes must survive the purge, or the container's mounts go
+// stale until it's restarted.
+func TestPurgeContentsPreservesBindMountedSubdirs(t *testing.T) {
+	main := t.TempDir()
+	subdirs := []string{"conf", "manconf", "misc", "logs"}
+	before := map[string]os.FileInfo{}
+	for _, d := range subdirs {
+		path := filepath.Join(main, d)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "x.conf"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[d] = fi
+	}
+	os.WriteFile(filepath.Join(main, "sites.conf"), []byte("stuff"), 0o644)
+
+	if err := purgeContents(main); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, d := range subdirs {
+		path := filepath.Join(main, d)
+		after, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("%s should still exist after purge: %v", d, err)
+		}
+		if !os.SameFile(before[d], after) {
+			t.Errorf("%s was deleted and recreated — a bind mount on it would now be stale until container restart", d)
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil || len(entries) != 0 {
+			t.Errorf("%s should be emptied of files, got entries=%v err=%v", d, entries, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(main, "sites.conf")); !os.IsNotExist(err) {
+		t.Error("sites.conf should have been removed by the purge")
+	}
+}
+
+func TestPurgeContentsCreatesMissing(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "logs")
+	if err := purgeContents(target); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(target); err != nil || !fi.IsDir() {
+		t.Errorf("expected dir to be created: %v", err)
+	}
+}
+
 func TestConvertLegacy(t *testing.T) {
 	dir := t.TempDir()
 	legacy := filepath.Join(dir, "site-configs.conf")

@@ -77,6 +77,8 @@ func main() {
 		mustConfig().restart()
 	case "clean":
 		mustConfig().clean()
+	case "analyze":
+		mustConfig().analyzeCmd(os.Args[2:])
 	case "edit":
 		mustConfig().edit()
 	case "init":
@@ -174,7 +176,17 @@ func (c *proxyConfig) generateOne(s site) {
 	if err := os.MkdirAll(filepath.Dir(confFile), 0o755); err != nil {
 		fail("create conf dir: %v", err)
 	}
+	if err := os.WriteFile(confFile, []byte(c.renderSite(s)), 0o644); err != nil {
+		fail("write %s: %v", confFile, err)
+	}
+	c.createLogFiles(s.fqdn)
+	fmt.Printf("🕸️  %s\n", s.fqdn)
+}
 
+// renderSite renders the nginx server block for a resolved site record. Kept
+// separate from generateOne so 'analyze' can compare it against what's
+// actually on disk without writing anything.
+func (c *proxyConfig) renderSite(s site) string {
 	forwardScheme := "http"
 	if s.flags.https {
 		forwardScheme = "https"
@@ -253,11 +265,7 @@ server {
 		b.WriteString("        \n        # Error redirect\n        include /etc/nginx/includes/error.conf;\n    }\n}\n")
 	}
 
-	if err := os.WriteFile(confFile, []byte(b.String()), 0o644); err != nil {
-		fail("write %s: %v", confFile, err)
-	}
-	c.createLogFiles(domain)
-	fmt.Printf("🕸️  %s\n", domain)
+	return b.String()
 }
 
 func (c *proxyConfig) createLogFiles(domain string) {
@@ -384,15 +392,55 @@ func (c *proxyConfig) list() {
 		}
 		fmt.Printf("%-30s → %-22s %s\n", s.fqdn, s.target, flags)
 	}
+	if manual := c.manconfFiles(); len(manual) > 0 {
+		fmt.Println()
+		info("Manually-managed configs in %s:", c.manconfDir())
+		for _, m := range manual {
+			fmt.Printf("%-30s → %s (manual)\n", m.name, m.path)
+		}
+	}
+}
+
+// purgeContents empties dir but leaves dir itself — and every subdirectory
+// inside it, at any depth — in place, preserving their inodes, ownership, and
+// any bind-mounts docker holds on them. It recurses into subdirectories
+// rather than RemoveAll-ing them: docker pins a bind mount to the source
+// directory's inode, so deleting and recreating a mounted dir (e.g. running
+// 'revpro init setup' again over an existing $REVPRO whose conf/, manconf/,
+// misc/ and logs/ subfolders are each bind-mounted separately) leaves the
+// running container's mount stale — showing empty — until it's restarted.
+// Missing dirs are created.
+func purgeContents(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		if e.IsDir() {
+			if err := purgeContents(path); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *proxyConfig) clean() {
 	info("Cleaning up configuration and log directories...")
 	for _, d := range []string{c.confDir, c.logDir} {
-		_ = os.RemoveAll(d)
-		_ = os.MkdirAll(d, 0o755)
+		if err := purgeContents(d); err != nil {
+			warn("clean %s: %v", d, err)
+		}
 	}
-	ok("Configuration and log directories cleaned and recreated.")
+	ok("Configuration and log directory contents cleaned.")
 }
 
 func (c *proxyConfig) reload() {
@@ -461,7 +509,9 @@ func (c *proxyConfig) initSetup() {
 			fail("Exiting setup without making changes.")
 		}
 		info("Deleting existing content...")
-		_ = os.RemoveAll(c.mainFolder)
+		if err := purgeContents(c.mainFolder); err != nil {
+			fail("clean %s: %v", c.mainFolder, err)
+		}
 	}
 
 	info("Creating folder structure...")
@@ -909,7 +959,14 @@ Site configs (reads $REVPRO/sites.conf):
   add <name> <domain.tld> <host:port> [flags] [--cert="name"]
                       Append a site under ==domain.tld and generate+reload it
                       (name '@' = apex; flags like +a -s -w; default www on)
-  list                List configured sites with resolved flags
+  list                List configured sites with resolved flags, plus any
+                      recognized manual configs in $REVPRO/manconf
+  analyze [name...]   Verify configs actually work: cert present/fresh,
+                      generated conf up to date, upstream reachable, nginx -t
+                      passes. Limits to the named site(s)/manual config(s) if
+                      given; otherwise checks everything. Manual configs in
+                      $REVPRO/manconf are recognized unless their first line
+                      is "#-ignore".
   convert             Convert legacy site-configs.conf → sites.conf (backs up old)
   compose             Write/print the bundled docker-compose.yml path to copy
   reload              docker exec reverseproxy nginx -s reload
@@ -919,8 +976,11 @@ Site configs (reads $REVPRO/sites.conf):
   init setup|open     Create the folder structure + starter sites.conf
 
 Certificates (ACME / Let's Encrypt via lego, HTTP-01):
-  issue [cert...]     Issue certs for all sites (or only the named ones).
-                      Each cert covers <domain> + www.<domain>, written to
+  issue [--force] [cert...]
+                      Issue certs for all sites (or only the named ones).
+                      Skips certs that already exist and aren't within the renew
+                      window; --force reissues regardless. Each cert covers
+                      <domain> + www.<domain>, written to
                       $CERTS_SUB/<cert>/<cert>.{crt,key,issuer.crt}.
                       Binds :80 directly to answer the challenge (works even
                       when the reverseproxy container is down — breaks the
