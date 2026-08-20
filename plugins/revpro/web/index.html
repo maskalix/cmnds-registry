@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>revpro</title>
+<style>
+  :root{
+    --bg:#0c1118; --panel:#131a24; --panel2:#0f1520; --line:#22304a; --text:#d7e2ef;
+    --dim:#7d8fa8; --accent:#4cc38a; --accent2:#5bb0f0; --warn:#e0b855; --danger:#e5717b;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;
+       display:flex;flex-direction:column}
+
+  header{display:flex;align-items:center;gap:14px;padding:10px 18px;
+         border-bottom:1px solid var(--line);background:var(--panel)}
+  header .logo{font-family:var(--mono);font-size:17px;color:var(--accent);font-weight:600}
+  header .logo span{color:var(--dim);font-weight:400}
+  header .path{font-family:var(--mono);font-size:12px;color:var(--dim);
+               overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  header .spacer{flex:1}
+  header .user{font-family:var(--mono);font-size:12px;color:var(--accent2)}
+
+  nav{display:flex;gap:2px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  nav button{background:none;border:none;border-bottom:2px solid transparent;color:var(--dim);
+             padding:10px 14px;font-size:13px;cursor:pointer;font-family:var(--mono)}
+  nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+  nav button:hover{color:var(--text)}
+
+  main{flex:1;overflow:auto;padding:18px}
+  .pane{display:none;max-width:1100px;margin:0 auto}
+  .pane.active{display:block}
+
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);
+     margin:22px 0 10px;font-weight:600}
+  h2:first-child{margin-top:0}
+
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+  button.act{padding:7px 13px;border-radius:6px;border:1px solid var(--line);cursor:pointer;
+             background:var(--panel);color:var(--text);font-family:var(--mono);font-size:12.5px}
+  button.act:hover{border-color:var(--accent);color:var(--accent)}
+  button.act.primary{border-color:var(--accent);color:var(--accent)}
+  button.act.primary:hover{background:var(--accent);color:var(--bg)}
+  button.act.warn:hover{border-color:var(--warn);color:var(--warn)}
+  button.act.danger:hover{border-color:var(--danger);color:var(--danger)}
+  button.act:disabled{opacity:.4;cursor:wait}
+  button.mini{padding:3px 9px;font-size:11.5px;border-radius:5px;border:1px solid var(--line);
+              background:transparent;color:var(--dim);cursor:pointer;font-family:var(--mono)}
+  button.mini:hover{color:var(--accent);border-color:var(--accent)}
+
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);
+        border-radius:8px;overflow:hidden}
+  .tablewrap{overflow-x:auto;border-radius:8px}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px}
+  th{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.06em;background:var(--panel2)}
+  tr:last-child td{border-bottom:none}
+  td.mono,th.mono{font-family:var(--mono)}
+  td a{color:var(--accent2);text-decoration:none}
+  td a:hover{text-decoration:underline}
+
+  .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;
+         font-family:var(--mono);border:1px solid var(--line);color:var(--dim);margin-right:4px}
+  .badge.on{border-color:var(--accent);color:var(--accent)}
+  .badge.blue{border-color:var(--accent2);color:var(--accent2)}
+  .badge.warn{border-color:var(--warn);color:var(--warn)}
+  .badge.bad{border-color:var(--danger);color:var(--danger)}
+
+  form.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;
+            background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
+  form.grid .full{grid-column:1/-1}
+  label{display:block;font-size:11px;color:var(--dim);margin-bottom:4px;
+        text-transform:uppercase;letter-spacing:.06em}
+  input[type=text],input[type=number],select,textarea{
+        width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--line);
+        background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent2)}
+  .checks{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding-top:4px}
+  .checks label{display:flex;align-items:center;gap:6px;margin:0;text-transform:none;
+                font-size:13px;color:var(--text);letter-spacing:0;cursor:pointer}
+  .row{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
+  .row>div{flex:1;min-width:140px}
+  .hint{color:var(--dim);font-size:12px;margin:6px 2px}
+  .hint code{font-family:var(--mono);color:var(--accent2)}
+  .error-box{border:1px solid var(--danger);color:var(--danger);border-radius:8px;
+             padding:10px 14px;margin-bottom:12px;font-family:var(--mono);font-size:12.5px;
+             white-space:pre-wrap}
+
+  textarea.conf{min-height:340px;resize:vertical;line-height:1.45;font-size:12.5px;
+                white-space:pre;tab-size:4}
+  .savebar{display:flex;gap:10px;align-items:center;margin-top:8px}
+  .savemsg{font-size:12px;font-family:var(--mono);color:var(--dim)}
+  .savemsg.ok{color:var(--accent)} .savemsg.bad{color:var(--danger)}
+
+  #consolewrap{border-top:1px solid var(--line);background:var(--panel2)}
+  #consolehead{display:flex;align-items:center;gap:10px;padding:6px 16px;cursor:pointer;user-select:none}
+  #consolehead .title{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  #consolehead .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+  #consolehead .dot.busy{background:var(--warn);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.3}}
+  #console{display:block;height:220px;overflow:auto;margin:0;padding:8px 16px 14px;
+           font-family:var(--mono);font-size:12px;line-height:1.5;color:var(--text);white-space:pre-wrap}
+  #consolewrap.min #console{display:none}
+
+  .cardlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .card .t{font-family:var(--mono);font-size:13px;color:var(--accent2)}
+  .card .d{font-size:12px;color:var(--dim);margin-top:4px;word-break:break-all}
+  .suggest-out{font-family:var(--mono);font-size:13px;margin-top:10px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">revpro<span> / web</span></div>
+  <div class="path" id="hdrpath"></div>
+  <div class="spacer"></div>
+  <div class="user" id="hdruser"></div>
+  <button class="mini" id="btnlogout">logout</button>
+</header>
+
+<nav id="tabs">
+  <button data-tab="sites" class="active">Sites</button>
+  <button data-tab="add">Add site</button>
+  <button data-tab="ports">Ports</button>
+  <button data-tab="tools">Certs &amp; Tools</button>
+  <button data-tab="config">Config</button>
+</nav>
+
+<main>
+  <!-- ================= SITES ================= -->
+  <section class="pane active" id="pane-sites">
+    <div id="siteserr"></div>
+    <h2>Actions</h2>
+    <div class="toolbar" id="actions">
+      <button class="act primary" data-run="regenerate">Regenerate</button>
+      <button class="act" data-run="generate">Generate</button>
+      <button class="act" data-run="reload">Reload nginx</button>
+      <button class="act warn" data-run="restart" data-confirm="Restart the reverseproxy container?">Restart</button>
+      <button class="act" data-run="analyze">Analyze all</button>
+      <button class="act" data-run="issue">Issue certs</button>
+      <button class="act" data-run="renew">Renew certs</button>
+      <button class="act" data-run="regenerate-renew">Regen + renew</button>
+      <button class="act danger" data-run="clean" data-confirm="Wipe conf/ and logs/ contents? (regenerate rebuilds them)">Clean</button>
+      <button class="act" data-run="compose">Compose file</button>
+      <button class="act" data-run="convert" data-confirm="Convert legacy site-configs.conf to sites.conf?">Convert legacy</button>
+    </div>
+    <h2>Sites <span id="sitecount" style="text-transform:none"></span></h2>
+    <div class="tablewrap"><table id="sitestable">
+      <thead><tr><th>Site</th><th>Target</th><th>Flags</th><th>Cert</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div id="manconfblock" style="display:none">
+      <h2>Manual configs (manconf/)</h2>
+      <div class="cardlist" id="manconflist"></div>
+    </div>
+  </section>
+
+  <!-- ================= ADD SITE ================= -->
+  <section class="pane" id="pane-add">
+    <h2>Add a site</h2>
+    <form class="grid" id="addform">
+      <div>
+        <label>Subdomain (@ = apex)</label>
+        <input type="text" id="add-name" placeholder="app" required>
+      </div>
+      <div>
+        <label>Domain</label>
+        <input type="text" id="add-domain" list="groupslist" placeholder="example.tld" required>
+        <datalist id="groupslist"></datalist>
+      </div>
+      <div>
+        <label>Machine (upstream host)</label>
+        <input type="text" id="add-host" list="machinelist" placeholder="10.0.0.2" required>
+        <datalist id="machinelist"></datalist>
+      </div>
+      <div>
+        <label>Port</label>
+        <div class="row" style="gap:6px">
+          <div><input type="number" id="add-port" min="1" max="65535" placeholder="8080" required></div>
+        </div>
+      </div>
+      <div>
+        <label>Category (for suggestion)</label>
+        <select id="add-category"></select>
+      </div>
+      <div style="display:flex;align-items:end;gap:10px">
+        <button type="button" class="act" id="btnsuggest">Suggest port</button>
+        <label style="display:flex;align-items:center;gap:5px;margin:0 0 8px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--dim)">
+          <input type="checkbox" id="add-probe" checked> probe
+        </label>
+      </div>
+      <div class="full checks">
+        <label><input type="checkbox" id="add-a"> auth proxy (a)</label>
+        <label><input type="checkbox" id="add-s"> https upstream (s)</label>
+        <label><input type="checkbox" id="add-w" checked> www variant (w)</label>
+        <label><input type="checkbox" id="add-l"> local only (l)</label>
+      </div>
+      <div class="full">
+        <label>Cert name override (optional)</label>
+        <input type="text" id="add-cert" placeholder="defaults to the site's fqdn">
+      </div>
+      <div class="full">
+        <button type="submit" class="act primary">Add site (generate + reload)</button>
+        <div class="suggest-out" id="suggestout"></div>
+      </div>
+    </form>
+    <p class="hint">Flag defaults come from the domain group's <code>&lt;...&gt;</code> header; only differing
+       flags are written to the new line. A missing cert is issued with <code>Issue certs</code> on the Sites tab.</p>
+  </section>
+
+  <!-- ================= PORTS ================= -->
+  <section class="pane" id="pane-ports">
+    <div id="portserr"></div>
+    <h2>Categories (ports.conf)</h2>
+    <div class="tablewrap"><table id="cattable">
+      <thead><tr><th>Category</th><th class="mono">Ranges</th></tr></thead><tbody></tbody>
+    </table></div>
+
+    <h2>Suggest next port</h2>
+    <form class="grid" id="suggestform">
+      <div>
+        <label>Machine</label>
+        <input type="text" id="sg-machine" list="machinelist" placeholder="10.0.0.2" required>
+      </div>
+      <div>
+        <label>Category</label>
+        <select id="sg-category"><option value="">(all)</option></select>
+      </div>
+      <div style="display:flex;align-items:end;gap:10px">
+        <button type="submit" class="act primary">Suggest</button>
+        <label style="display:flex;align-items:center;gap:5px;margin:0 0 8px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--dim)">
+          <input type="checkbox" id="sg-probe" checked> probe
+        </label>
+      </div>
+      <div class="full suggest-out" id="sg-out"></div>
+    </form>
+
+    <h2>Check a port</h2>
+    <form class="grid" id="checkform">
+      <div>
+        <label>Machine</label>
+        <input type="text" id="ck-machine" list="machinelist" required>
+      </div>
+      <div>
+        <label>Port</label>
+        <input type="number" id="ck-port" min="1" max="65535" required>
+      </div>
+      <div style="display:flex;align-items:end">
+        <button type="submit" class="act primary">Check</button>
+      </div>
+      <div class="full suggest-out" id="ck-out"></div>
+    </form>
+
+    <h2>Ports in use per machine</h2>
+    <div class="tablewrap"><table id="machtable">
+      <thead><tr><th>Machine</th><th class="mono">Ports (category)</th></tr></thead><tbody></tbody>
+    </table></div>
+  </section>
+
+  <!-- ================= TOOLS ================= -->
+  <section class="pane" id="pane-tools">
+    <h2>Inspect a live certificate</h2>
+    <form class="grid" id="certform">
+      <div class="full">
+        <label>Domain</label>
+        <input type="text" id="cert-domain" placeholder="example.com" required>
+      </div>
+      <div class="full checks">
+        <label><input type="checkbox" class="certflag" value="-e" checked> expiry (-e)</label>
+        <label><input type="checkbox" class="certflag" value="-i" checked> issuer (-i)</label>
+        <label><input type="checkbox" class="certflag" value="-s"> subject (-s)</label>
+        <label><input type="checkbox" class="certflag" value="-v"> verify chain (-v)</label>
+        <label><input type="checkbox" class="certflag" value="-g"> SSL reachability (-g)</label>
+        <label><input type="checkbox" class="certflag" value="-a"> full details (-a)</label>
+      </div>
+      <div class="full"><button type="submit" class="act primary">Inspect</button></div>
+    </form>
+
+    <h2>HTTP/2 &amp; HTTP/3 support</h2>
+    <form class="grid" id="httpform">
+      <div>
+        <label>Version</label>
+        <select id="http-ver"><option value="2">HTTP/2</option><option value="3">HTTP/3</option></select>
+      </div>
+      <div class="full" style="grid-column:auto/-1">
+        <label>URL</label>
+        <input type="text" id="http-url" placeholder="https://example.com" required>
+      </div>
+      <div class="full"><button type="submit" class="act primary">Check</button></div>
+    </form>
+    <p class="hint">Self-signed CA generation (<code>revpro certgen</code>) and initial folder setup
+       (<code>revpro init setup</code>) prompt interactively — run those from the CLI.</p>
+  </section>
+
+  <!-- ================= CONFIG ================= -->
+  <section class="pane" id="pane-config">
+    <h2>sites.conf <span class="savemsg" id="path-sites" style="text-transform:none"></span></h2>
+    <textarea class="conf" id="conf-sites" spellcheck="false"></textarea>
+    <div class="savebar">
+      <button class="act primary" data-save="sites">Save sites.conf</button>
+      <button class="act" data-load="sites">Reload</button>
+      <span class="savemsg" id="msg-sites"></span>
+    </div>
+
+    <h2>ports.conf <span class="savemsg" id="path-ports" style="text-transform:none"></span></h2>
+    <textarea class="conf" id="conf-ports" spellcheck="false"></textarea>
+    <div class="savebar">
+      <button class="act primary" data-save="ports">Save ports.conf</button>
+      <button class="act" data-load="ports">Reload</button>
+      <span class="savemsg" id="msg-ports"></span>
+    </div>
+    <p class="hint">Saves validate first and keep the previous version as <code>.bak</code>.
+       After changing sites.conf, hit <code>Regenerate</code> on the Sites tab.</p>
+  </section>
+</main>
+
+<div id="consolewrap" class="min">
+  <div id="consolehead">
+    <div class="dot" id="statusdot"></div>
+    <div class="title" id="statustext">console — idle (click to expand)</div>
+    <div class="spacer" style="flex:1"></div>
+    <button class="mini" id="btnclear">clear</button>
+  </div>
+  <pre id="console"></pre>
+</div>
+
+<script>
+"use strict";
+let S = {csrf:"", user:"", sites:[], categories:[], machines:{}, groups:[]};
+let busyFlag = false;
+
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+
+// ---------- api helpers ----------
+async function api(path, opts={}) {
+  opts.headers = Object.assign({"X-Revpro-CSRF": S.csrf}, opts.headers||{});
+  const res = await fetch(path, opts);
+  if (res.status === 401) { location.href = "/login"; throw new Error("unauthenticated"); }
+  return res;
+}
+async function apiJSON(path, opts) {
+  const res = await api(path, opts);
+  const data = await res.json().catch(()=>({error:"bad response"}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// ---------- console ----------
+function consoleOpen(){ $("#consolewrap").classList.remove("min"); }
+function consoleAppend(text){
+  const c = $("#console");
+  c.textContent += text;
+  c.scrollTop = c.scrollHeight;
+}
+function setBusy(b, label){
+  busyFlag = b;
+  $("#statusdot").classList.toggle("busy", b);
+  $("#statustext").textContent = b ? ("console — running: " + label) : "console — idle";
+  $$("button.act").forEach(x => x.disabled = b);
+}
+
+async function stream(path, body, label){
+  if (busyFlag) return;
+  consoleOpen();
+  setBusy(true, label);
+  consoleAppend((($("#console").textContent) ? "\n" : "") + "━━━ " + new Date().toLocaleTimeString() + " " + label + "\n");
+  try {
+    const res = await api(path, {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    if (!res.ok) {
+      const data = await res.json().catch(()=>({error:res.statusText}));
+      consoleAppend("[error] " + (data.error||res.statusText) + "\n");
+    } else {
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      for(;;){
+        const {done, value} = await reader.read();
+        if (done) break;
+        consoleAppend(dec.decode(value, {stream:true}));
+      }
+    }
+  } catch(e){
+    consoleAppend("[error] " + e.message + "\n");
+  }
+  setBusy(false, "");
+  loadState();
+}
+
+// ---------- state / rendering ----------
+function esc(s){ return String(s); } // values go in via textContent only
+
+function badge(text, cls){
+  const b = document.createElement("span");
+  b.className = "badge " + (cls||"");
+  b.textContent = text;
+  return b;
+}
+
+function certBadge(days){
+  if (days === -2) return badge("cert ?", "");
+  if (days === -1) return badge("cert missing", "bad");
+  if (days < 30)   return badge(days + "d left", "warn");
+  return badge(days + "d left", "on");
+}
+
+function renderSites(){
+  const tb = $("#sitestable tbody");
+  tb.innerHTML = "";
+  $("#siteserr").innerHTML = "";
+  if (S.sitesError){
+    const d = document.createElement("div");
+    d.className = "error-box";
+    d.textContent = "sites.conf problem: " + S.sitesError + "\nFix it on the Config tab.";
+    $("#siteserr").appendChild(d);
+  }
+  $("#sitecount").textContent = "(" + (S.sites||[]).length + ")";
+  (S.sites||[]).forEach(st => {
+    const tr = document.createElement("tr");
+
+    const td1 = document.createElement("td"); td1.className = "mono";
+    const a = document.createElement("a");
+    a.href = "https://" + st.fqdn; a.target = "_blank"; a.rel = "noreferrer";
+    a.textContent = st.fqdn;
+    td1.appendChild(a); tr.appendChild(td1);
+
+    const td2 = document.createElement("td"); td2.className = "mono";
+    td2.textContent = st.target; tr.appendChild(td2);
+
+    const td3 = document.createElement("td");
+    if (st.auth)  td3.appendChild(badge("auth","blue"));
+    if (st.https) td3.appendChild(badge("https","on"));
+    if (st.www)   td3.appendChild(badge("www",""));
+    if (st.local) td3.appendChild(badge("local","warn"));
+    tr.appendChild(td3);
+
+    const td4 = document.createElement("td"); td4.className = "mono";
+    td4.appendChild(certBadge(st.certDays));
+    const cn = document.createElement("span");
+    cn.style.color = "var(--dim)"; cn.style.fontSize = "11px";
+    cn.textContent = " " + st.cert;
+    td4.appendChild(cn);
+    tr.appendChild(td4);
+
+    const td5 = document.createElement("td");
+    const b1 = document.createElement("button"); b1.className = "mini"; b1.textContent = "analyze";
+    b1.onclick = () => stream("/api/run", {action:"analyze", targets:[st.fqdn]}, "analyze " + st.fqdn);
+    td5.appendChild(b1);
+    td5.appendChild(document.createTextNode(" "));
+    const b2 = document.createElement("button"); b2.className = "mini"; b2.textContent = "issue cert";
+    b2.onclick = () => stream("/api/run", {action:"issue", targets:[st.cert]}, "issue " + st.cert);
+    td5.appendChild(b2);
+    tr.appendChild(td5);
+
+    tb.appendChild(tr);
+  });
+
+  const man = S.manconf||[];
+  $("#manconfblock").style.display = man.length ? "" : "none";
+  const ml = $("#manconflist"); ml.innerHTML = "";
+  man.forEach(m => {
+    const c = document.createElement("div"); c.className = "card";
+    const t = document.createElement("div"); t.className = "t"; t.textContent = m.name;
+    const d = document.createElement("div"); d.className = "d"; d.textContent = m.path;
+    c.appendChild(t); c.appendChild(d); ml.appendChild(c);
+  });
+}
+
+function renderPorts(){
+  $("#portserr").innerHTML = "";
+  if (S.portsError){
+    const d = document.createElement("div");
+    d.className = "error-box";
+    d.textContent = S.portsError;
+    $("#portserr").appendChild(d);
+  }
+  const cb = $("#cattable tbody"); cb.innerHTML = "";
+  const catSel = $("#add-category"), sgSel = $("#sg-category");
+  catSel.innerHTML = ""; sgSel.innerHTML = '<option value="">(all)</option>';
+  (S.categories||[]).forEach(c => {
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.textContent = c.name;
+    const t2 = document.createElement("td"); t2.className = "mono"; t2.textContent = c.ranges;
+    tr.appendChild(t1); tr.appendChild(t2); cb.appendChild(tr);
+    [catSel, sgSel].forEach(sel => {
+      const o = document.createElement("option"); o.value = c.name; o.textContent = c.name;
+      sel.appendChild(o);
+    });
+  });
+
+  const mb = $("#machtable tbody"); mb.innerHTML = "";
+  const ml = $("#machinelist"); ml.innerHTML = "";
+  const catFor = p => (S.categories||[]).find(c =>
+    c.ranges.split(" ").some(r => {
+      const m = r.split("-"); const lo = +m[0], hi = +(m[1]||m[0]);
+      return p >= lo && p <= hi;
+    }));
+  Object.keys(S.machines||{}).sort().forEach(host => {
+    const o = document.createElement("option"); o.value = host; ml.appendChild(o);
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = host;
+    const t2 = document.createElement("td"); t2.className = "mono";
+    Object.keys(S.machines[host]).map(Number).sort((a,b)=>a-b).forEach(p => {
+      const c = catFor(p);
+      t2.appendChild(badge(p + (c ? " " + c.name : ""), c ? "blue" : ""));
+    });
+    tr.appendChild(t1); tr.appendChild(t2); mb.appendChild(tr);
+  });
+
+  const gl = $("#groupslist"); gl.innerHTML = "";
+  (S.groups||[]).sort().forEach(g => {
+    const o = document.createElement("option"); o.value = g; gl.appendChild(o);
+  });
+}
+
+async function loadState(){
+  try {
+    S = await apiJSON("/api/state");
+    $("#hdruser").textContent = S.authDisabled ? "no-auth" : S.user;
+    $("#hdrpath").textContent = S.revproDir;
+    renderSites();
+    renderPorts();
+  } catch(e){
+    consoleOpen(); consoleAppend("[error] state: " + e.message + "\n");
+  }
+}
+
+// ---------- tabs ----------
+$("#tabs").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  $$("#tabs button").forEach(x => x.classList.toggle("active", x === b));
+  $$(".pane").forEach(p => p.classList.toggle("active", p.id === "pane-" + b.dataset.tab));
+  if (b.dataset.tab === "config") { loadConf("sites"); loadConf("ports"); }
+});
+
+// ---------- actions toolbar ----------
+$("#actions").addEventListener("click", e => {
+  const b = e.target.closest("button[data-run]"); if (!b) return;
+  if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+  stream("/api/run", {action: b.dataset.run}, b.dataset.run);
+});
+
+// ---------- add site ----------
+$("#btnsuggest").onclick = async () => {
+  const machine = $("#add-host").value.trim();
+  const category = $("#add-category").value;
+  const out = $("#suggestout");
+  if (!machine){ out.textContent = "enter the machine first"; return; }
+  out.textContent = "probing...";
+  try {
+    const probe = $("#add-probe").checked ? "1" : "0";
+    const d = await apiJSON("/api/ports/suggest?machine=" + encodeURIComponent(machine) +
+      "&category=" + encodeURIComponent(category) + "&probe=" + probe);
+    const s = d.suggestions[0];
+    if (s.error){ out.textContent = "✗ " + s.error; return; }
+    $("#add-port").value = s.port;
+    out.textContent = "✓ " + s.port + " — " + s.reason + (d.probed ? " (probed free)" : "") +
+                      "   [" + s.category + ": " + s.ranges + "]";
+  } catch(e){ out.textContent = "✗ " + e.message; }
+};
+
+$("#addform").addEventListener("submit", e => {
+  e.preventDefault();
+  const target = $("#add-host").value.trim() + ":" + $("#add-port").value.trim();
+  const body = {
+    name: $("#add-name").value.trim(),
+    domain: $("#add-domain").value.trim(),
+    target: target,
+    cert: $("#add-cert").value.trim(),
+    flags: {A: $("#add-a").checked, S: $("#add-s").checked,
+            W: $("#add-w").checked, L: $("#add-l").checked}
+  };
+  stream("/api/sites/add", body, "add " + body.name + " → " + body.domain);
+});
+
+// ---------- ports pane ----------
+$("#suggestform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const out = $("#sg-out"); out.textContent = "probing...";
+  try {
+    const d = await apiJSON("/api/ports/suggest?machine=" + encodeURIComponent($("#sg-machine").value.trim()) +
+      "&category=" + encodeURIComponent($("#sg-category").value) +
+      "&probe=" + ($("#sg-probe").checked ? "1" : "0"));
+    out.textContent = d.suggestions.map(s =>
+      s.error ? ("✗ " + s.category + ": " + s.error)
+              : ("✓ " + s.category.padEnd(12) + " → " + s.port + "   (" + s.reason +
+                 (d.probed ? "; probed free" : "") + "; ranges " + s.ranges + ")")
+    ).join("\n");
+  } catch(err){ out.textContent = "✗ " + err.message; }
+});
+
+$("#checkform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const out = $("#ck-out"); out.textContent = "checking...";
+  try {
+    const d = await apiJSON("/api/ports/check?machine=" + encodeURIComponent($("#ck-machine").value.trim()) +
+      "&port=" + encodeURIComponent($("#ck-port").value.trim()) + "&probe=1");
+    const lines = [];
+    lines.push(d.category ? "category: " + d.category : "category: none (outside every range)");
+    lines.push(d.usedBy && d.usedBy.length ? "✗ referenced in sites.conf by: " + d.usedBy.join(", ")
+                                           : "✓ not referenced in sites.conf");
+    lines.push(d.listening ? "✗ something is LISTENING on that port" : "✓ nothing listening (or filtered)");
+    const taken = (d.usedBy && d.usedBy.length) || d.listening;
+    lines.push(taken ? "→ port looks TAKEN" : "→ port looks FREE");
+    out.textContent = lines.join("\n");
+  } catch(err){ out.textContent = "✗ " + err.message; }
+});
+
+// ---------- tools ----------
+$("#certform").addEventListener("submit", e => {
+  e.preventDefault();
+  const flags = $$(".certflag").filter(c => c.checked).map(c => c.value);
+  stream("/api/run", {action:"cert", domain: $("#cert-domain").value.trim(), certFlags: flags},
+         "cert " + $("#cert-domain").value.trim());
+});
+$("#httpform").addEventListener("submit", e => {
+  e.preventDefault();
+  stream("/api/run", {action:"http", httpVer: $("#http-ver").value, url: $("#http-url").value.trim()},
+         "http/" + $("#http-ver").value + " check");
+});
+
+// ---------- config editors ----------
+async function loadConf(file){
+  try {
+    const d = await apiJSON("/api/conf?file=" + file);
+    $("#conf-" + file).value = d.content;
+    $("#path-" + file).textContent = d.path;
+    $("#msg-" + file).textContent = "";
+  } catch(e){
+    $("#msg-" + file).textContent = e.message;
+    $("#msg-" + file).className = "savemsg bad";
+  }
+}
+document.addEventListener("click", async e => {
+  const save = e.target.closest("button[data-save]");
+  const load = e.target.closest("button[data-load]");
+  if (load) return loadConf(load.dataset.load);
+  if (!save) return;
+  const file = save.dataset.save;
+  const msg = $("#msg-" + file);
+  msg.textContent = "saving..."; msg.className = "savemsg";
+  try {
+    const d = await apiJSON("/api/conf", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({file: file, content: $("#conf-" + file).value})});
+    msg.textContent = "✓ " + d.message; msg.className = "savemsg ok";
+    loadState();
+  } catch(err){
+    msg.textContent = "✗ " + err.message; msg.className = "savemsg bad";
+  }
+});
+
+// ---------- misc ----------
+$("#consolehead").onclick = e => {
+  if (e.target.id === "btnclear") return;
+  $("#consolewrap").classList.toggle("min");
+};
+$("#btnclear").onclick = () => { $("#console").textContent = ""; };
+$("#btnlogout").onclick = async () => {
+  try { await api("/logout", {method:"POST"}); } catch(e){}
+  location.href = "/login";
+};
+
+loadState();
+</script>
+</body>
+</html>

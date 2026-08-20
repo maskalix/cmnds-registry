@@ -83,6 +83,10 @@ func main() {
 		mustConfig().edit()
 	case "init":
 		mustConfig().initCmd(os.Args[2:])
+	case "port":
+		mustConfig().portCmd(os.Args[2:])
+	case "web":
+		mustConfig().webCmd(os.Args[2:])
 	case "cert":
 		certInspect(os.Args[2:])
 	case "certgen":
@@ -116,6 +120,18 @@ func configRead(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// configWrite persists a cmnds config variable via 'cmnds config write'.
+func configWrite(name, value string) error {
+	cmnds, err := exec.LookPath("cmnds")
+	if err != nil {
+		return fmt.Errorf("cmnds binary not found in PATH")
+	}
+	if out, err := exec.Command(cmnds, "config", "write", name, value).CombinedOutput(); err != nil {
+		return fmt.Errorf("cmnds config write %s: %v: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // run executes a command with the current stdio attached.
@@ -996,6 +1012,23 @@ Bootstrapping a brand-new domain (no cert yet):
   Once running, set REVPRO_ACME_WEBROOT=/revpro/letsencrypt so future renews
   use the running nginx (no need to stop it).
 
+Ports (reads $REVPRO/ports.conf — category port ranges):
+  port init           Write a starter ports.conf (edit categories/ranges there)
+  port list [machine] Show categories + ports each machine already uses
+  port suggest <machine> [category] [--no-probe]
+                      Suggest the next free port on a machine: next after the
+                      highest used one in the category's ranges (falls back to
+                      the first gap), skipping ports with a live TCP listener
+  port check <machine> <port> [--no-probe]
+                      Is the port referenced in sites.conf / listening?
+
+Web UI:
+  web [--listen host:port] [--no-auth]
+                      Serve the embedded web UI (sites, actions, certs, ports,
+                      config editing). Local (bcrypt) and/or OIDC login;
+                      see 'revpro web help' for the config variables.
+  web passwd [user]   Set/replace the local web login credentials
+
 TLS helpers:
   cert -d <domain> [-e|-i|-s|-a|-v|-g|-comp --CA path]
                       Inspect/verify a live certificate (openssl)
@@ -1017,5 +1050,6 @@ Config variables (via 'cmnds config'):
   REVPRO_ACME_STAGING "true" → Let's Encrypt staging CA
   REVPRO_ACME_DIR     ACME account storage (default $REVPRO/acme)
   REVPRO_RENEW_DAYS   renew when fewer than N days remain (default 30)
+  REVPRO_WEB_*        web UI listen/auth settings — see 'revpro web help'
 `)
 }

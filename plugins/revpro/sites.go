@@ -93,17 +93,7 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 
 		// Group header: ==domain.tld <+a +s>
 		if strings.HasPrefix(trimmed, "==") {
-			rest := strings.TrimSpace(trimmed[2:])
-			groupFlags = defaultFlags()
-			if i := strings.Index(rest, "<"); i >= 0 {
-				j := strings.Index(rest, ">")
-				if j > i {
-					groupFlags.apply(strings.Fields(rest[i+1 : j]))
-				}
-				groupDomain = strings.TrimSpace(rest[:i])
-			} else {
-				groupDomain = rest
-			}
+			groupDomain, groupFlags = parseGroupHeader(trimmed)
 			if groupDomain == "" {
 				return nil, fmt.Errorf("line %d: group header missing domain", lineNo)
 			}
@@ -145,6 +135,42 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 		return nil, err
 	}
 	return sites, nil
+}
+
+// parseGroupHeader parses a trimmed "==domain.tld <+a +s>" header line into
+// the domain and its resolved default flags.
+func parseGroupHeader(trimmed string) (string, siteFlags) {
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "=="))
+	flags := defaultFlags()
+	domain := rest
+	if i := strings.Index(rest, "<"); i >= 0 {
+		if j := strings.Index(rest, ">"); j > i {
+			flags.apply(strings.Fields(rest[i+1 : j]))
+		}
+		domain = strings.TrimSpace(rest[:i])
+	}
+	return domain, flags
+}
+
+// groupFlags maps each group domain in sites.conf to its resolved default
+// flags. A missing config file yields an empty map, not an error.
+func (c *proxyConfig) groupFlags() (map[string]siteFlags, error) {
+	f, err := os.Open(c.configFile)
+	if err != nil {
+		return map[string]siteFlags{}, nil
+	}
+	defer f.Close()
+	out := map[string]siteFlags{}
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		trimmed := strings.TrimSpace(stripComment(sc.Text()))
+		if strings.HasPrefix(trimmed, "==") {
+			if domain, flags := parseGroupHeader(trimmed); domain != "" {
+				out[domain] = flags
+			}
+		}
+	}
+	return out, sc.Err()
 }
 
 // stripComment removes a trailing "# ..." comment, but not a '#' inside a
