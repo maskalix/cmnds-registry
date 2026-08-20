@@ -138,21 +138,24 @@ app      10.0.0.2:8443
 	}
 }
 
-func TestGroupFlags(t *testing.T) {
+func TestGroupMeta(t *testing.T) {
 	dir := t.TempDir()
 	conf := filepath.Join(dir, "sites.conf")
-	os.WriteFile(conf, []byte("==plain.tld\n@ 1.2.3.4:80\n==secure.tld <+a +s -w>\n@ 1.2.3.4:443\n"), 0o644)
+	os.WriteFile(conf, []byte("==plain.tld\n@ 1.2.3.4:80\n==secure.tld <+a +s -w>\n@ 1.2.3.4:443\n==apps.tld [A] <+s>\n@ 8080\n"), 0o644)
 
 	c := &proxyConfig{configFile: conf}
-	gf, err := c.groupFlags()
+	gm, err := c.groupMeta()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f := gf["plain.tld"]; f != defaultFlags() {
-		t.Errorf("plain.tld flags = %+v, want defaults", f)
+	if g := gm["plain.tld"]; g.flags != defaultFlags() || g.machine != "" {
+		t.Errorf("plain.tld = %+v, want defaults and no machine", g)
 	}
-	if f := gf["secure.tld"]; !f.auth || !f.https || f.www {
-		t.Errorf("secure.tld flags = %+v, want +a +s -w", f)
+	if g := gm["secure.tld"]; !g.flags.auth || !g.flags.https || g.flags.www {
+		t.Errorf("secure.tld flags = %+v, want +a +s -w", g.flags)
+	}
+	if g := gm["apps.tld"]; g.machine != "A" || !g.flags.https {
+		t.Errorf("apps.tld = %+v, want machine A and +s", g)
 	}
 }
 

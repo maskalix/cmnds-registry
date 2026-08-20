@@ -118,6 +118,85 @@ func TestParseSitesBrokenMachinesConfFails(t *testing.T) {
 	}
 }
 
+func TestParseGroupHeaderMachine(t *testing.T) {
+	cases := []struct {
+		in      string
+		domain  string
+		machine string
+		https   bool
+	}{
+		{"==example.tld", "example.tld", "", false},
+		{"==example.tld [A]", "example.tld", "A", false},
+		{"==example.tld [A] <+s>", "example.tld", "A", true},
+		{"==example.tld <+s> [AVA01]", "example.tld", "AVA01", true},
+		{"==example.tld [192.168.2.30]", "example.tld", "192.168.2.30", false},
+	}
+	for _, tc := range cases {
+		domain, gi := parseGroupHeader(tc.in)
+		if domain != tc.domain || gi.machine != tc.machine || gi.flags.https != tc.https {
+			t.Errorf("parseGroupHeader(%q) = %q, %+v; want %q machine=%q https=%v",
+				tc.in, domain, gi, tc.domain, tc.machine, tc.https)
+		}
+	}
+}
+
+func TestPortOnlyTarget(t *testing.T) {
+	for in, want := range map[string]string{
+		"8080": "8080", ":8080": "8080", "443": "443",
+	} {
+		if p, okp := portOnlyTarget(in); !okp || p != want {
+			t.Errorf("portOnlyTarget(%q) = %q,%v; want %q,true", in, p, okp, want)
+		}
+	}
+	for _, in := range []string{"1.2.3.4:80", "A:80", "host", "70000", ":0", ":"} {
+		if _, okp := portOnlyTarget(in); okp {
+			t.Errorf("portOnlyTarget(%q) should be false", in)
+		}
+	}
+}
+
+func TestParseSitesGroupMachine(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "machines.conf"), []byte("A     192.168.2.20\n"), 0o644)
+	conf := filepath.Join(dir, "sites.conf")
+	os.WriteFile(conf, []byte(`
+==apps.tld [A] <+s>
+@        8443
+grafana  :3000
+backup   10.0.0.9:9000
+`), 0o644)
+
+	c := &proxyConfig{mainFolder: dir, configFile: conf}
+	sites, err := c.parseSites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sites[0].target != "192.168.2.20:8443" || sites[0].rawTarget != "8443" {
+		t.Errorf("bare port: got %q (raw %q)", sites[0].target, sites[0].rawTarget)
+	}
+	if !sites[0].flags.https {
+		t.Error("group flags must still apply alongside [machine]")
+	}
+	if sites[1].target != "192.168.2.20:3000" {
+		t.Errorf(":port form: got %q", sites[1].target)
+	}
+	if sites[2].target != "10.0.0.9:9000" {
+		t.Errorf("full target must override the group machine, got %q", sites[2].target)
+	}
+
+	// A port-only line without a group [machine] must fail loudly.
+	os.WriteFile(conf, []byte("==plain.tld\n@ 8443\n"), 0o644)
+	if _, err := c.parseSites(); err == nil {
+		t.Error("port-only target without a group machine must be an error")
+	}
+
+	// A group machine carrying a port is malformed.
+	os.WriteFile(conf, []byte("==bad.tld [A:80]\n@ 8443\n"), 0o644)
+	if _, err := c.parseSites(); err == nil {
+		t.Error("group machine with a port must be an error")
+	}
+}
+
 func TestMachinesSetAndRm(t *testing.T) {
 	dir := t.TempDir()
 	c := &proxyConfig{mainFolder: dir, configFile: filepath.Join(dir, "sites.conf")}

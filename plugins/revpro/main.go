@@ -1025,6 +1025,9 @@ Machines (reads $REVPRO/machines.conf — short slugs for machine addresses):
                       Add/update or remove a slug. Slugs (1-8 letters/digits)
                       work anywhere a machine is named: sites.conf targets
                       (app A:8080), 'port suggest A web', and the web UI.
+                      A group header may declare a machine for its whole
+                      block — ==apps.tld [A] — and lines below then only
+                      need a port (grafana 3000 → A:3000).
 
 Ports (reads $REVPRO/ports.conf — category port ranges):
   port init           Write a starter ports.conf (edit categories/ranges there)

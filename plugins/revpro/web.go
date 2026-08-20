@@ -279,12 +279,17 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 		state["sites"] = out
 	}
 
-	if gf, err := ws.c.groupFlags(); err == nil {
-		groups := make([]string, 0, len(gf))
-		for d := range gf {
+	if gm, err := ws.c.groupMeta(); err == nil {
+		groups := make([]string, 0, len(gm))
+		machines := map[string]string{}
+		for d, gi := range gm {
 			groups = append(groups, d)
+			if gi.machine != "" {
+				machines[d] = gi.machine
+			}
 		}
 		state["groups"] = groups
+		state["groupMachines"] = machines
 	}
 
 	manual := ws.c.manconfFiles()
@@ -544,17 +549,25 @@ func (ws *webServer) handleAddSite(w http.ResponseWriter, r *http.Request, _ *we
 		return
 	}
 
-	// Emit only the flag tokens that differ from the group's defaults, so the
-	// written line stays as clean as a hand-written one.
+	// Emit only what differs from the group's defaults, so the written line
+	// stays as clean as a hand-written one: flag tokens vs the group flags,
+	// and just the port when the machine equals the group's [machine].
 	base := defaultFlags()
-	if gf, err := ws.c.groupFlags(); err == nil {
-		if g, okg := gf[req.Domain]; okg {
-			base = g
+	target := req.Target
+	if gm, err := ws.c.groupMeta(); err == nil {
+		if g, okg := gm[req.Domain]; okg {
+			base = g.flags
+			if g.machine != "" {
+				slugs, _ := ws.c.machineSlugs()
+				if resolveMachine(slugs, host) == resolveMachine(slugs, g.machine) {
+					target = port
+				}
+			}
 		}
 	}
 	want := siteFlags{auth: req.Flags.A, https: req.Flags.S, www: req.Flags.W, local: req.Flags.L}
 
-	args := []string{"add", req.Name, req.Domain, req.Target}
+	args := []string{"add", req.Name, req.Domain, target}
 	args = append(args, diffTokens(base, want)...)
 	if req.Cert != "" {
 		args = append(args, `--cert=`+req.Cert)

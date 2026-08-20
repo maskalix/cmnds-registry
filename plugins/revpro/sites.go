@@ -85,7 +85,7 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 
 	var sites []site
 	var groupDomain string
-	var groupFlags siteFlags
+	var group groupInfo
 
 	sc := bufio.NewScanner(f)
 	lineNo := 0
@@ -99,11 +99,14 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 			continue
 		}
 
-		// Group header: ==domain.tld <+a +s>
+		// Group header: ==domain.tld [machine] <+a +s>
 		if strings.HasPrefix(trimmed, "==") {
-			groupDomain, groupFlags = parseGroupHeader(trimmed)
+			groupDomain, group = parseGroupHeader(trimmed)
 			if groupDomain == "" {
 				return nil, fmt.Errorf("line %d: group header missing domain", lineNo)
+			}
+			if strings.ContainsAny(group.machine, ": ") {
+				return nil, fmt.Errorf("line %d: bad group machine %q (a host or a machines.conf slug, no port)", lineNo, group.machine)
 			}
 			continue
 		}
@@ -118,8 +121,17 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 		}
 		sub, target := fields[0], fields[1]
 
+		// A port-only target ("8080" or ":8080") borrows the group's [machine].
+		expanded := target
+		if port, portOnly := portOnlyTarget(target); portOnly {
+			if group.machine == "" {
+				return nil, fmt.Errorf("line %d: target %q has no host and group ==%s declares no [machine]", lineNo, target, groupDomain)
+			}
+			expanded = group.machine + ":" + port
+		}
+
 		// Per-line flags start as the group's resolved flags, then toggle.
-		fl := groupFlags
+		fl := group.flags
 		certName := ""
 		for _, tok := range fields[2:] {
 			if strings.HasPrefix(tok, "--cert=") {
@@ -139,7 +151,7 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 
 		sites = append(sites, site{
 			fqdn:      fqdn,
-			target:    resolveTarget(slugs, target),
+			target:    resolveTarget(slugs, expanded),
 			rawTarget: target,
 			certName:  certName,
 			flags:     fl,
@@ -151,36 +163,61 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 	return sites, nil
 }
 
-// parseGroupHeader parses a trimmed "==domain.tld <+a +s>" header line into
-// the domain and its resolved default flags.
-func parseGroupHeader(trimmed string) (string, siteFlags) {
-	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "=="))
-	flags := defaultFlags()
-	domain := rest
-	if i := strings.Index(rest, "<"); i >= 0 {
-		if j := strings.Index(rest, ">"); j > i {
-			flags.apply(strings.Fields(rest[i+1 : j]))
-		}
-		domain = strings.TrimSpace(rest[:i])
-	}
-	return domain, flags
+// groupInfo is what a group header declares for the lines below it.
+type groupInfo struct {
+	flags   siteFlags
+	machine string // default machine for port-only targets ("" = none)
 }
 
-// groupFlags maps each group domain in sites.conf to its resolved default
-// flags. A missing config file yields an empty map, not an error.
-func (c *proxyConfig) groupFlags() (map[string]siteFlags, error) {
+// parseGroupHeader parses a trimmed "==domain.tld [machine] <+a +s>" header
+// line into the domain and its group defaults. [machine] and <flags> may
+// appear in either order; the machine is a host or a machines.conf slug.
+func parseGroupHeader(trimmed string) (string, groupInfo) {
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "=="))
+	gi := groupInfo{flags: defaultFlags()}
+	if i := strings.Index(rest, "["); i >= 0 {
+		if j := strings.Index(rest, "]"); j > i {
+			gi.machine = strings.TrimSpace(rest[i+1 : j])
+			rest = strings.TrimSpace(rest[:i] + " " + rest[j+1:])
+		}
+	}
+	if i := strings.Index(rest, "<"); i >= 0 {
+		if j := strings.Index(rest, ">"); j > i {
+			gi.flags.apply(strings.Fields(rest[i+1 : j]))
+		}
+		rest = strings.TrimSpace(rest[:i])
+	}
+	return rest, gi
+}
+
+// portOnlyTarget reports whether target names just a port ("8080" or
+// ":8080"), returning the bare port when it does.
+func portOnlyTarget(target string) (string, bool) {
+	p := strings.TrimPrefix(target, ":")
+	if p == "" {
+		return "", false
+	}
+	if n := atoiSafe(p); n >= 1 && n <= 65535 {
+		return p, true
+	}
+	return "", false
+}
+
+// groupMeta maps each group domain in sites.conf to its header defaults
+// (flags + machine). A missing config file yields an empty map, not an error.
+func (c *proxyConfig) groupMeta() (map[string]groupInfo, error) {
 	f, err := os.Open(c.configFile)
 	if err != nil {
-		return map[string]siteFlags{}, nil
+		return map[string]groupInfo{}, nil
 	}
 	defer f.Close()
-	out := map[string]siteFlags{}
+	out := map[string]groupInfo{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		trimmed := strings.TrimSpace(stripComment(sc.Text()))
 		if strings.HasPrefix(trimmed, "==") {
-			if domain, flags := parseGroupHeader(trimmed); domain != "" {
-				out[domain] = flags
+			if domain, gi := parseGroupHeader(trimmed); domain != "" {
+				out[domain] = gi
 			}
 		}
 	}
@@ -357,10 +394,17 @@ const sitesTutorial = `#########################################################
 #   @        192.168.1.10:3000  -w # internal.tld, no www
 #   dash     192.168.1.11:3000
 #
-# Columns:  <name>  <target host:port>  [flags]  [--cert="name"]  [# comment]
+#   ==apps.tld [A] <+s>            # group machine A (a machines.conf slug or host)
+#   @        8443                  # port only → A:8443
+#   grafana  :3000                 # ":port" works too → A:3000
+#   backup   B:9000                # full target still overrides the group machine
+#
+# Columns:  <name>  <target>  [flags]  [--cert="name"]  [# comment]
 #   name      subdomain label, or '@' for the apex domain
 #   target    upstream server:port; the server may be a machine slug from
-#             machines.conf (e.g. A:8080 for 192.168.2.20:8080)
+#             machines.conf (e.g. A:8080 for 192.168.2.20:8080). When the
+#             group header declares [machine], a bare port ("8080" or
+#             ":8080") is enough — the group's machine fills in the host.
 #
 # Flags (each +x enables, -x disables; resolved global → group → line):
 #   a   authentik auth proxy        (default OFF)

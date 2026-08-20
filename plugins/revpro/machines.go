@@ -271,6 +271,7 @@ Usage:
 Slugs are 1-8 letters/digits starting with a letter, matched
 case-insensitively. Once defined they work anywhere a machine is named:
   sites.conf targets:   app   A:8080
+  group headers:        ==apps.tld [A]   (lines below need only a port)
   port suggestion:      revpro port suggest A web
   the web UI's machine fields
 Generated nginx configs always contain the resolved host.

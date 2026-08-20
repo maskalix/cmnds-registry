@@ -208,7 +208,9 @@
       </div>
     </form>
     <p class="hint">Flag defaults come from the domain group's <code>&lt;...&gt;</code> header; only differing
-       flags are written to the new line. A missing cert is issued with <code>Issue certs</code> on the Sites tab.</p>
+       flags are written to the new line. If the group declares a <code>[machine]</code>, it is prefilled
+       here and matching lines are written port-only. A missing cert is issued with
+       <code>Issue certs</code> on the Sites tab.</p>
   </section>
 
   <!-- ================= PORTS ================= -->
@@ -592,6 +594,17 @@ $("#btnsuggest").onclick = async () => {
                       (d.slug ? "   (" + d.slug + " = " + d.machine + ")" : "");
   } catch(e){ out.textContent = "✗ " + e.message; }
 };
+
+// Prefill the machine from the domain group's [machine] header; anything the
+// user typed themselves is left alone.
+$("#add-domain").addEventListener("input", () => {
+  const hostEl = $("#add-host");
+  const gm = (S.groupMachines||{})[$("#add-domain").value.trim()];
+  if (gm && (!hostEl.value.trim() || hostEl.dataset.auto === "1")){
+    hostEl.value = gm; hostEl.dataset.auto = "1";
+  }
+});
+$("#add-host").addEventListener("input", e => { delete e.target.dataset.auto; });
 
 $("#addform").addEventListener("submit", e => {
   e.preventDefault();
