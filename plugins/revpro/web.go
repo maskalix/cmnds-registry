@@ -225,14 +225,15 @@ func (ws *webServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request) 
 // ---------- state ----------
 
 type siteJSON struct {
-	FQDN     string `json:"fqdn"`
-	Target   string `json:"target"`
-	Cert     string `json:"cert"`
-	CertDays int    `json:"certDays"` // -1 = missing, -2 = unknown (CERTS_SUB unset)
-	Auth     bool   `json:"auth"`
-	HTTPS    bool   `json:"https"`
-	WWW      bool   `json:"www"`
-	Local    bool   `json:"local"`
+	FQDN      string `json:"fqdn"`
+	Target    string `json:"target"`
+	RawTarget string `json:"rawTarget,omitempty"` // set when a slug was used
+	Cert      string `json:"cert"`
+	CertDays  int    `json:"certDays"` // -1 = missing, -2 = unknown (CERTS_SUB unset)
+	Auth      bool   `json:"auth"`
+	HTTPS     bool   `json:"https"`
+	WWW       bool   `json:"www"`
+	Local     bool   `json:"local"`
 }
 
 func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webSession) {
@@ -266,10 +267,14 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 					seen[st.certName] = -1
 				}
 			}
-			out = append(out, siteJSON{
+			sj := siteJSON{
 				FQDN: st.fqdn, Target: st.target, Cert: st.certName, CertDays: days,
 				Auth: st.flags.auth, HTTPS: st.flags.https, WWW: st.flags.www, Local: st.flags.local,
-			})
+			}
+			if st.rawTarget != st.target {
+				sj.RawTarget = st.rawTarget
+			}
+			out = append(out, sj)
 		}
 		state["sites"] = out
 	}
@@ -307,6 +312,16 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 		state["machines"] = machines
 	}
 
+	if ms, err := ws.c.parseMachines(); err != nil {
+		state["machinesError"] = err.Error()
+	} else {
+		list := make([]map[string]string, 0, len(ms))
+		for _, m := range ms {
+			list = append(list, map[string]string{"slug": m.slug, "host": m.host})
+		}
+		state["slugs"] = list
+	}
+
 	writeJSON(w, state)
 }
 
@@ -319,6 +334,8 @@ func (ws *webServer) confPath(file string) (string, bool) {
 		return ws.c.configFile, true
 	case "ports":
 		return ws.c.portsFile(), true
+	case "machines":
+		return ws.c.machinesFile(), true
 	}
 	return "", false
 }
@@ -326,7 +343,7 @@ func (ws *webServer) confPath(file string) (string, bool) {
 func (ws *webServer) handleConfGet(w http.ResponseWriter, r *http.Request, _ *webSession) {
 	path, okf := ws.confPath(r.URL.Query().Get("file"))
 	if !okf {
-		httpErrJSON(w, http.StatusBadRequest, "file must be 'sites' or 'ports'")
+		httpErrJSON(w, http.StatusBadRequest, "file must be 'sites', 'ports' or 'machines'")
 		return
 	}
 	data, err := os.ReadFile(path)
@@ -348,7 +365,7 @@ func (ws *webServer) handleConfSave(w http.ResponseWriter, r *http.Request, _ *w
 	}
 	path, okf := ws.confPath(req.File)
 	if !okf {
-		httpErrJSON(w, http.StatusBadRequest, "file must be 'sites' or 'ports'")
+		httpErrJSON(w, http.StatusBadRequest, "file must be 'sites', 'ports' or 'machines'")
 		return
 	}
 	if !strings.HasSuffix(req.Content, "\n") && req.Content != "" {
@@ -366,13 +383,19 @@ func (ws *webServer) handleConfSave(w http.ResponseWriter, r *http.Request, _ *w
 		defer os.Remove(tmp.Name())
 		tmp.WriteString(req.Content)
 		tmp.Close()
-		probe := &proxyConfig{configFile: tmp.Name()}
+		// mainFolder carried over so machine slugs resolve as in production.
+		probe := &proxyConfig{configFile: tmp.Name(), mainFolder: ws.c.mainFolder}
 		if _, err := probe.parseSites(); err != nil {
 			httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
 	case "ports":
 		if _, err := parsePortCategoriesText(req.Content); err != nil {
+			httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+	case "machines":
+		if _, err := parseMachinesText(req.Content); err != nil {
 			httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
@@ -665,6 +688,10 @@ func (ws *webServer) handlePortSuggest(w http.ResponseWriter, r *http.Request, _
 		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	input := machine
+	if slugs, err := ws.c.machineSlugs(); err == nil {
+		machine = resolveMachine(slugs, machine)
+	}
 	used := allUsed[machine]
 	if used == nil {
 		used = map[int][]string{}
@@ -699,7 +726,11 @@ func (ws *webServer) handlePortSuggest(w http.ResponseWriter, r *http.Request, _
 		httpErrJSON(w, http.StatusNotFound, "category not found")
 		return
 	}
-	writeJSON(w, map[string]any{"machine": machine, "probed": q.Get("probe") != "0", "suggestions": out})
+	res := map[string]any{"machine": machine, "probed": q.Get("probe") != "0", "suggestions": out}
+	if input != machine {
+		res["slug"] = input
+	}
+	writeJSON(w, res)
 }
 
 func (ws *webServer) handlePortCheck(w http.ResponseWriter, r *http.Request, _ *webSession) {
@@ -715,7 +746,14 @@ func (ws *webServer) handlePortCheck(w http.ResponseWriter, r *http.Request, _ *
 		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	input := machine
+	if slugs, err := ws.c.machineSlugs(); err == nil {
+		machine = resolveMachine(slugs, machine)
+	}
 	res := map[string]any{"machine": machine, "port": port}
+	if input != machine {
+		res["slug"] = input
+	}
 	if cats, err := ws.c.parsePortCategories(); err == nil {
 		if cat, okc := categoryFor(cats, port); okc {
 			res["category"] = cat.name

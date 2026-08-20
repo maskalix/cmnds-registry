@@ -21,6 +21,8 @@ func newTestServer(t *testing.T) (*webServer, *httptest.Server) {
 		[]byte("==example.tld\n@        10.0.0.1:8443\napp      10.0.0.2:8080\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "ports.conf"),
 		[]byte("web 3000-3009\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "machines.conf"),
+		[]byte("B    10.0.0.2\n"), 0o644)
 
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
 	if err != nil {
@@ -258,6 +260,31 @@ func TestPortSuggestAPI(t *testing.T) {
 	res2.Body.Close()
 	if res2.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown category: got %d, want 404", res2.StatusCode)
+	}
+}
+
+func TestPortSuggestAPIResolvesSlug(t *testing.T) {
+	_, srv := newTestServer(t)
+	ck := login(t, srv)
+
+	// "b" is the slug for 10.0.0.2 (case-insensitive).
+	res := authedGet(t, srv, ck, "/api/ports/suggest?machine=b&category=web&probe=0")
+	defer res.Body.Close()
+	var out struct {
+		Machine     string `json:"machine"`
+		Slug        string `json:"slug"`
+		Suggestions []struct {
+			Port int `json:"port"`
+		} `json:"suggestions"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Machine != "10.0.0.2" || out.Slug != "b" {
+		t.Errorf("slug resolution: machine=%q slug=%q", out.Machine, out.Slug)
+	}
+	if len(out.Suggestions) != 1 || out.Suggestions[0].Port != 3000 {
+		t.Errorf("unexpected suggestions: %+v", out.Suggestions)
 	}
 }
 

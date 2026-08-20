@@ -322,8 +322,12 @@ func (c *proxyConfig) portList(machine string) {
 		fmt.Println()
 	}
 
-	hosts := make([]string, 0, len(used))
-	for h := range used {
+	slugs, _ := c.machineSlugs()
+	names := c.machineNames()
+	machine = resolveMachine(slugs, machine)
+
+	var hosts []string
+	for _, h := range sortedMachineHosts(used, names) {
 		if machine == "" || h == machine {
 			hosts = append(hosts, h)
 		}
@@ -332,11 +336,14 @@ func (c *proxyConfig) portList(machine string) {
 		warn("no sites found%s in %s", forMachine(machine), c.configFile)
 		return
 	}
-	sort.Strings(hosts)
 
 	info("Ports in use per machine (from sites.conf):")
 	for _, h := range hosts {
-		fmt.Printf("  %s\n", h)
+		label := h
+		if slug, okn := names[h]; okn {
+			label = slug + " — " + h
+		}
+		fmt.Printf("  %s\n", label)
 		ports := make([]int, 0, len(used[h]))
 		for p := range used[h] {
 			ports = append(ports, p)
@@ -367,6 +374,11 @@ func (c *proxyConfig) portSuggest(machine, category string, probe bool) {
 	allUsed, err := c.usedPortsByMachine()
 	if err != nil {
 		fail("%v", err)
+	}
+	slugs, _ := c.machineSlugs()
+	if resolved := resolveMachine(slugs, machine); resolved != machine {
+		info("machine %s = %s", machine, resolved)
+		machine = resolved
 	}
 	used := allUsed[machine]
 	if used == nil {
@@ -410,6 +422,11 @@ func (c *proxyConfig) portCheck(machine string, port int, probe bool) {
 	allUsed, err := c.usedPortsByMachine()
 	if err != nil {
 		fail("%v", err)
+	}
+	slugs, _ := c.machineSlugs()
+	if resolved := resolveMachine(slugs, machine); resolved != machine {
+		info("machine %s = %s", machine, resolved)
+		machine = resolved
 	}
 
 	info("%s:%d", machine, port)

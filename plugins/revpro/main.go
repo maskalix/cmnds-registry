@@ -85,6 +85,8 @@ func main() {
 		mustConfig().initCmd(os.Args[2:])
 	case "port":
 		mustConfig().portCmd(os.Args[2:])
+	case "machines":
+		mustConfig().machinesCmd(os.Args[2:])
 	case "web":
 		mustConfig().webCmd(os.Args[2:])
 	case "cert":
@@ -406,7 +408,11 @@ func (c *proxyConfig) list() {
 		if flags == "" {
 			flags = "(defaults)"
 		}
-		fmt.Printf("%-30s → %-22s %s\n", s.fqdn, s.target, flags)
+		target := s.target
+		if s.rawTarget != s.target {
+			target = s.rawTarget + " = " + s.target
+		}
+		fmt.Printf("%-30s → %-22s %s\n", s.fqdn, target, flags)
 	}
 	if manual := c.manconfFiles(); len(manual) > 0 {
 		fmt.Println()
@@ -1011,6 +1017,14 @@ Bootstrapping a brand-new domain (no cert yet):
   3) docker compose up -d reverseproxy    # certs exist → nginx starts
   Once running, set REVPRO_ACME_WEBROOT=/revpro/letsencrypt so future renews
   use the running nginx (no need to stop it).
+
+Machines (reads $REVPRO/machines.conf — short slugs for machine addresses):
+  machines [list]     Show defined slugs (A → 192.168.2.20, ...)
+  machines init       Write a starter machines.conf
+  machines set <slug> <host> | machines rm <slug>
+                      Add/update or remove a slug. Slugs (1-8 letters/digits)
+                      work anywhere a machine is named: sites.conf targets
+                      (app A:8080), 'port suggest A web', and the web UI.
 
 Ports (reads $REVPRO/ports.conf — category port ranges):
   port init           Write a starter ports.conf (edit categories/ranges there)

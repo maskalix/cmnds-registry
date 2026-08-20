@@ -61,19 +61,27 @@ func (f *siteFlags) apply(tokens []string) {
 
 // site is a fully-resolved entry from sites.conf.
 type site struct {
-	fqdn     string // e.g. api.example.tld (apex → example.tld)
-	target   string // server:port
-	certName string // cert folder/name
-	flags    siteFlags
+	fqdn      string // e.g. api.example.tld (apex → example.tld)
+	target    string // server:port, machine slug resolved
+	rawTarget string // target as written in sites.conf (may use a slug)
+	certName  string // cert folder/name
+	flags     siteFlags
 }
 
-// parseSites reads sites.conf into resolved site records.
+// parseSites reads sites.conf into resolved site records. Targets written
+// with a machine slug (see machines.conf) come back with the slug resolved
+// in target and the original spelling in rawTarget.
 func (c *proxyConfig) parseSites() ([]site, error) {
 	f, err := os.Open(c.configFile)
 	if err != nil {
 		return nil, fmt.Errorf("Configuration file not found at %s (run 'revpro convert' or 'revpro init setup')", c.configFile)
 	}
 	defer f.Close()
+
+	slugs, err := c.machineSlugs()
+	if err != nil {
+		return nil, err
+	}
 
 	var sites []site
 	var groupDomain string
@@ -129,7 +137,13 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 			certName = fqdn
 		}
 
-		sites = append(sites, site{fqdn: fqdn, target: target, certName: certName, flags: fl})
+		sites = append(sites, site{
+			fqdn:      fqdn,
+			target:    resolveTarget(slugs, target),
+			rawTarget: target,
+			certName:  certName,
+			flags:     fl,
+		})
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -345,7 +359,8 @@ const sitesTutorial = `#########################################################
 #
 # Columns:  <name>  <target host:port>  [flags]  [--cert="name"]  [# comment]
 #   name      subdomain label, or '@' for the apex domain
-#   target    upstream server:port
+#   target    upstream server:port; the server may be a machine slug from
+#             machines.conf (e.g. A:8080 for 192.168.2.20:8080)
 #
 # Flags (each +x enables, -x disables; resolved global → group → line):
 #   a   authentik auth proxy        (default OFF)

@@ -172,8 +172,8 @@
         <datalist id="groupslist"></datalist>
       </div>
       <div>
-        <label>Machine (upstream host)</label>
-        <input type="text" id="add-host" list="machinelist" placeholder="10.0.0.2" required>
+        <label>Machine (host or slug)</label>
+        <input type="text" id="add-host" list="machinelist" placeholder="10.0.0.2 or A" required>
         <datalist id="machinelist"></datalist>
       </div>
       <div>
@@ -222,8 +222,8 @@
     <h2>Suggest next port</h2>
     <form class="grid" id="suggestform">
       <div>
-        <label>Machine</label>
-        <input type="text" id="sg-machine" list="machinelist" placeholder="10.0.0.2" required>
+        <label>Machine (host or slug)</label>
+        <input type="text" id="sg-machine" list="machinelist" placeholder="10.0.0.2 or A" required>
       </div>
       <div>
         <label>Category</label>
@@ -241,7 +241,7 @@
     <h2>Check a port</h2>
     <form class="grid" id="checkform">
       <div>
-        <label>Machine</label>
+        <label>Machine (host or slug)</label>
         <input type="text" id="ck-machine" list="machinelist" required>
       </div>
       <div>
@@ -312,8 +312,19 @@
       <button class="act" data-load="ports">Reload</button>
       <span class="savemsg" id="msg-ports"></span>
     </div>
+
+    <h2>machines.conf <span class="savemsg" id="path-machines" style="text-transform:none"></span></h2>
+    <textarea class="conf" id="conf-machines" spellcheck="false" style="min-height:180px"
+              placeholder="# slug   host&#10;A        192.168.2.20&#10;AVA01    192.168.2.31"></textarea>
+    <div class="savebar">
+      <button class="act primary" data-save="machines">Save machines.conf</button>
+      <button class="act" data-load="machines">Reload</button>
+      <span class="savemsg" id="msg-machines"></span>
+    </div>
     <p class="hint">Saves validate first and keep the previous version as <code>.bak</code>.
-       After changing sites.conf, hit <code>Regenerate</code> on the Sites tab.</p>
+       After changing sites.conf or machines.conf, hit <code>Regenerate</code> on the Sites tab.
+       Machine slugs (1&ndash;8 letters/digits) work in sites.conf targets
+       (<code>app A:8080</code>), the port tools, and this UI's machine fields.</p>
   </section>
 </main>
 
@@ -427,7 +438,16 @@ function renderSites(){
     td1.appendChild(a); tr.appendChild(td1);
 
     const td2 = document.createElement("td"); td2.className = "mono";
-    td2.textContent = st.target; tr.appendChild(td2);
+    if (st.rawTarget){
+      td2.textContent = st.rawTarget;
+      const rs = document.createElement("span");
+      rs.style.color = "var(--dim)"; rs.style.fontSize = "11px";
+      rs.textContent = " = " + st.target;
+      td2.appendChild(rs);
+    } else {
+      td2.textContent = st.target;
+    }
+    tr.appendChild(td2);
 
     const td3 = document.createElement("td");
     if (st.auth)  td3.appendChild(badge("auth","blue"));
@@ -497,10 +517,21 @@ function renderPorts(){
       const m = r.split("-"); const lo = +m[0], hi = +(m[1]||m[0]);
       return p >= lo && p <= hi;
     }));
+  const slugFor = {};              // host → slug (first definition wins)
+  (S.slugs||[]).forEach(s => {
+    if (!(s.host in slugFor)) slugFor[s.host] = s.slug;
+    const o = document.createElement("option");
+    o.value = s.slug; o.label = s.host;
+    ml.appendChild(o);
+  });
   Object.keys(S.machines||{}).sort().forEach(host => {
-    const o = document.createElement("option"); o.value = host; ml.appendChild(o);
+    if (!(host in slugFor)){
+      const o = document.createElement("option"); o.value = host; ml.appendChild(o);
+    }
     const tr = document.createElement("tr");
-    const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = host;
+    const t1 = document.createElement("td"); t1.className = "mono";
+    if (slugFor[host]) t1.appendChild(badge(slugFor[host], "on"));
+    t1.appendChild(document.createTextNode(host));
     const t2 = document.createElement("td"); t2.className = "mono";
     Object.keys(S.machines[host]).map(Number).sort((a,b)=>a-b).forEach(p => {
       const c = catFor(p);
@@ -532,7 +563,7 @@ $("#tabs").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   $$("#tabs button").forEach(x => x.classList.toggle("active", x === b));
   $$(".pane").forEach(p => p.classList.toggle("active", p.id === "pane-" + b.dataset.tab));
-  if (b.dataset.tab === "config") { loadConf("sites"); loadConf("ports"); }
+  if (b.dataset.tab === "config") { loadConf("sites"); loadConf("ports"); loadConf("machines"); }
 });
 
 // ---------- actions toolbar ----------
@@ -557,7 +588,8 @@ $("#btnsuggest").onclick = async () => {
     if (s.error){ out.textContent = "✗ " + s.error; return; }
     $("#add-port").value = s.port;
     out.textContent = "✓ " + s.port + " — " + s.reason + (d.probed ? " (probed free)" : "") +
-                      "   [" + s.category + ": " + s.ranges + "]";
+                      "   [" + s.category + ": " + s.ranges + "]" +
+                      (d.slug ? "   (" + d.slug + " = " + d.machine + ")" : "");
   } catch(e){ out.textContent = "✗ " + e.message; }
 };
 
@@ -583,7 +615,8 @@ $("#suggestform").addEventListener("submit", async e => {
     const d = await apiJSON("/api/ports/suggest?machine=" + encodeURIComponent($("#sg-machine").value.trim()) +
       "&category=" + encodeURIComponent($("#sg-category").value) +
       "&probe=" + ($("#sg-probe").checked ? "1" : "0"));
-    out.textContent = d.suggestions.map(s =>
+    out.textContent = (d.slug ? d.slug + " = " + d.machine + "\n" : "") +
+      d.suggestions.map(s =>
       s.error ? ("✗ " + s.category + ": " + s.error)
               : ("✓ " + s.category.padEnd(12) + " → " + s.port + "   (" + s.reason +
                  (d.probed ? "; probed free" : "") + "; ranges " + s.ranges + ")")
@@ -598,6 +631,7 @@ $("#checkform").addEventListener("submit", async e => {
     const d = await apiJSON("/api/ports/check?machine=" + encodeURIComponent($("#ck-machine").value.trim()) +
       "&port=" + encodeURIComponent($("#ck-port").value.trim()) + "&probe=1");
     const lines = [];
+    if (d.slug) lines.push(d.slug + " = " + d.machine);
     lines.push(d.category ? "category: " + d.category : "category: none (outside every range)");
     lines.push(d.usedBy && d.usedBy.length ? "✗ referenced in sites.conf by: " + d.usedBy.join(", ")
                                            : "✓ not referenced in sites.conf");

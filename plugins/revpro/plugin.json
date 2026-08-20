@@ -1,7 +1,7 @@
 {
   "name": "revpro",
-  "version": "2.6.0",
-  "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, HTTP/3 support, a web UI (local/OIDC auth), and per-category port suggestion",
+  "version": "2.7.0",
+  "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, HTTP/3 support, a web UI (local/OIDC auth), per-category port suggestion, and machine slugs",
   "author": "Martin Skalicky",
   "type": "binary",
   "entry_point": "revpro",
@@ -27,6 +27,7 @@
       { "flag": "clean", "description": "Wipe and recreate conf/ and logs/" },
       { "flag": "edit", "description": "Open site-configs.conf in $EDITOR" },
       { "flag": "init setup|open", "description": "Create the folder structure / open the config" },
+      { "flag": "machines [list|init|set|rm]", "description": "Machine slugs (machines.conf): short codes like A = 192.168.2.20, usable in sites.conf targets, port tools and the web UI" },
       { "flag": "port init|list|suggest|check", "description": "Category port ranges (ports.conf): suggest the next free port on a machine, check a port, list usage" },
       { "flag": "web [--listen] [--no-auth]", "description": "Serve the embedded web UI (all controls); 'web passwd' sets the local login" },
       { "flag": "cert -d <domain> [...]", "description": "Inspect/verify a live certificate" },
