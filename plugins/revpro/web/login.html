@@ -6,38 +6,73 @@
 <title>revpro — sign in</title>
 <style>
   :root{
-    --bg:#0c1118; --panel:#131a24; --line:#22304a; --text:#d7e2ef; --dim:#7d8fa8;
-    --accent:#4cc38a; --accent2:#5bb0f0; --danger:#e5717b; --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    color-scheme:light dark;
+    --accent:#56775f; --accent-dk:#94af9b;
+    --bg:#f5f5f5; --surface:#ffffff; --fg:#111111;
+    --fg-2:rgba(17,17,17,.66); --fg-3:rgba(17,17,17,.6);
+    --line:rgba(0,0,0,.13); --line-soft:rgba(0,0,0,.06);
+    --a:var(--accent); --on-accent:#ffffff; --bad:#b23a2b;
+    --font-sans:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    --font-mono:"Fira Code",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --grain-opacity:.035;
   }
-  *{box-sizing:border-box}
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-       background:var(--bg);color:var(--text);
-       font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
-  .card{width:min(92vw,380px);background:var(--panel);border:1px solid var(--line);
-        border-radius:10px;padding:28px 26px}
-  h1{font-family:var(--mono);font-size:20px;margin:0 0 2px;color:var(--accent)}
-  h1 .dim{color:var(--dim);font-weight:400}
-  p.sub{margin:0 0 22px;color:var(--dim);font-size:13px}
-  label{display:block;font-size:12px;color:var(--dim);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em}
-  input{width:100%;padding:9px 11px;border-radius:6px;border:1px solid var(--line);
-        background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)}
-  input:focus{outline:none;border-color:var(--accent2)}
-  button{width:100%;margin-top:18px;padding:10px;border-radius:6px;border:1px solid var(--accent);
-         background:transparent;color:var(--accent);font-size:14px;font-family:var(--mono);cursor:pointer}
-  button:hover{background:var(--accent);color:var(--bg)}
-  a.oidc{display:block;margin-top:14px;padding:10px;border-radius:6px;border:1px solid var(--accent2);
-         color:var(--accent2);text-align:center;text-decoration:none;font-family:var(--mono);font-size:14px}
-  a.oidc:hover{background:var(--accent2);color:var(--bg)}
-  .err{margin:0 0 14px;padding:9px 11px;border:1px solid var(--danger);border-radius:6px;
-       color:var(--danger);font-size:13px;word-break:break-word}
-  .sep{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11px;margin-top:16px}
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#111111; --surface:#1a1a1a; --fg:#f2f2f2;
+      --fg-2:rgba(242,242,242,.64); --fg-3:rgba(242,242,242,.52);
+      --line:rgba(255,255,255,.14); --line-soft:rgba(255,255,255,.07);
+      --a:var(--accent-dk); --on-accent:#101a12; --bad:#e0705e;
+      --grain-opacity:.05;
+    }
+  }
+  *{box-sizing:border-box;margin:0}
+  body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:var(--bg);color:var(--fg);font-family:var(--font-sans);line-height:1.6;
+       -webkit-font-smoothing:antialiased}
+  ::selection{background:var(--a);color:var(--on-accent)}
+  :focus-visible{outline:2px solid var(--a);outline-offset:2px}
+  .grain{position:fixed;inset:0;z-index:90;pointer-events:none;opacity:var(--grain-opacity);
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+  .grid-lines{position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background-image:linear-gradient(to right,var(--line-soft) 1px,transparent 1px),
+                     linear-gradient(to bottom,var(--line-soft) 1px,transparent 1px);
+    background-size:60px 60px}
+  .card{width:min(92vw,380px);background:var(--surface);border:1px solid var(--line);padding:2rem 1.85rem}
+  .brand{display:flex;align-items:center;gap:.85rem;margin-bottom:.4rem}
+  .brand__mark{display:grid;place-items:center;width:2.1rem;height:2.1rem;
+    background:var(--a);color:var(--on-accent);font-family:var(--font-mono);
+    font-size:.8rem;font-weight:600}
+  h1{font-size:1.05rem;font-weight:800;text-transform:uppercase;letter-spacing:.02em}
+  p.sub{margin:0 0 1.6rem;font-family:var(--font-mono);font-size:.6875rem;
+    text-transform:uppercase;letter-spacing:.18em;color:var(--fg-3)}
+  label{display:block;margin:.9rem 0 .3rem;font-family:var(--font-mono);font-size:.625rem;
+    font-weight:500;text-transform:uppercase;letter-spacing:.16em;color:var(--fg-3)}
+  input{width:100%;padding:.6rem .7rem;border:1px solid var(--line);background:var(--bg);
+    color:var(--fg);font-family:var(--font-mono);font-size:.875rem;border-radius:0}
+  input:focus{outline:none;border-color:var(--a)}
+  button{width:100%;margin-top:1.35rem;padding:.75rem;border:1px solid var(--a);
+    background:var(--a);color:var(--on-accent);font-family:var(--font-sans);font-size:.78125rem;
+    font-weight:600;text-transform:uppercase;letter-spacing:.1em;cursor:pointer;
+    transition:background-color .2s ease,color .2s ease}
+  button:hover{background:transparent;color:var(--a)}
+  a.oidc{display:block;margin-top:.9rem;padding:.75rem;border:1px solid var(--fg);
+    color:var(--fg);text-align:center;text-decoration:none;font-size:.78125rem;font-weight:600;
+    text-transform:uppercase;letter-spacing:.1em;transition:background-color .2s ease,color .2s ease}
+  a.oidc:hover{background:var(--fg);color:var(--bg)}
+  .err{margin:0 0 1rem;padding:.6rem .75rem;border:1px solid var(--bad);color:var(--bad);
+    font-family:var(--font-mono);font-size:.75rem;word-break:break-word}
+  .sep{display:flex;align-items:center;gap:.7rem;margin-top:1.1rem;
+    font-family:var(--font-mono);font-size:.625rem;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--fg-3)}
   .sep::before,.sep::after{content:"";flex:1;height:1px;background:var(--line)}
 </style>
 </head>
 <body>
+  <div class="grain"></div>
+  <div class="grid-lines"></div>
   <div class="card">
-    <h1>revpro<span class="dim"> / web</span></h1>
-    <p class="sub">nginx reverse-proxy manager</p>
+    <div class="brand"><span class="brand__mark">RP</span><h1>revpro</h1></div>
+    <p class="sub">reverse proxy manager</p>
     {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
     {{if .Local}}
     <form method="post" action="/login">

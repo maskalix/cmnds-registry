@@ -317,6 +317,24 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 		state["machines"] = machines
 	}
 
+	// Setup progress for the onboarding checklist: which pieces exist yet.
+	dirExists := func(p string) bool {
+		st, err := os.Stat(p)
+		return err == nil && st.IsDir()
+	}
+	fileExists := func(p string) bool {
+		st, err := os.Stat(p)
+		return err == nil && !st.IsDir()
+	}
+	state["setup"] = map[string]bool{
+		"folder":   dirExists(ws.c.mainFolder),
+		"sites":    fileExists(ws.c.configFile),
+		"ports":    fileExists(ws.c.portsFile()),
+		"machines": fileExists(ws.c.machinesFile()),
+		"acme":     configRead("REVPRO_ACME_EMAIL") != "",
+		"certs":    ws.c.certsSub != "",
+	}
+
 	if ms, err := ws.c.parseMachines(); err != nil {
 		state["machinesError"] = err.Error()
 	} else {
