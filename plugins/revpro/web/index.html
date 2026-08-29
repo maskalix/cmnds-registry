@@ -153,6 +153,7 @@ a:hover{text-decoration:underline}
 .chip--ok{border-color:var(--ok);color:var(--ok)}
 .chip--warn{border-color:var(--warn);color:var(--warn)}
 .chip--bad{border-color:var(--bad);color:var(--bad)}
+.chip--tag{cursor:default;background:var(--surface-2)}
 
 /* ── Tables ── */
 .tablewrap{overflow-x:auto}
@@ -161,11 +162,37 @@ th,td{text-align:left;padding:.6rem .9rem;border-bottom:1px solid var(--line-sof
   font-size:.8425rem;vertical-align:middle}
 th{font-family:var(--font-mono);font-size:.625rem;font-weight:500;text-transform:uppercase;
   letter-spacing:.16em;color:var(--fg-3);border-bottom:1px solid var(--line)}
+th[data-sort]{cursor:pointer;user-select:none;white-space:nowrap}
+th[data-sort]:hover{color:var(--a)}
+th[data-sort] .sortarrow{display:inline-block;width:.9em;opacity:.5}
+th[data-sort].is-sorted .sortarrow{opacity:1;color:var(--a)}
 tr:last-child td{border-bottom:none}
 tbody tr{transition:background-color .15s ease}
 tbody tr:hover{background:var(--surface-2)}
 td.mono{font-family:var(--font-mono);font-size:.8125rem}
 td .dim{color:var(--fg-3);font-size:.7rem}
+td .sitename{display:block;font-weight:600;color:var(--fg)}
+td .grouplabel{display:block;color:var(--fg-3);font-size:.7rem;margin-top:.15rem}
+.rowtags{margin-top:.3rem}
+.rownote{cursor:help}
+
+/* ── Modal ── */
+.modal{position:fixed;inset:0;z-index:130;display:none}
+.modal.is-on{display:block}
+.modal__overlay{position:absolute;inset:0;background:rgba(0,0,0,.45)}
+.modal__box{position:relative;max-width:28rem;margin:8vh auto 0;padding:1.6rem;
+  background:var(--surface);border:1px solid var(--line);box-shadow:0 1.5rem 3rem rgba(0,0,0,.25)}
+.modal__title{font-size:1rem;font-weight:800;text-transform:uppercase;letter-spacing:-.01em;margin-bottom:.2rem}
+.modal__sub{font-family:var(--font-mono);font-size:.7rem;color:var(--fg-3);margin-bottom:1.1rem}
+.modal__actions{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1.2rem}
+
+/* ── Branding ── */
+.brandrow{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.brandlogo-preview{width:3rem;height:3rem;object-fit:contain;border:1px solid var(--line);
+  background:var(--surface-2);flex:0 0 auto}
+.brandlogo-empty{width:3rem;height:3rem;border:1px dashed var(--line);flex:0 0 auto;
+  display:grid;place-items:center;color:var(--fg-3);font-size:.65rem}
+input[type=color]{padding:.2rem;height:2.6rem;width:4rem;cursor:pointer}
 
 /* ── Forms ── */
 .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1rem}
@@ -300,7 +327,13 @@ pre.code .k{color:#8fc7a5}
 
 <header class="topbar">
   <div class="topbar__inner">
-    <span class="brand"><span class="brand__mark">RP</span><span class="brand__name">revpro</span></span>
+    <span class="brand">
+      <span class="brand__mark" id="hdrmark">RP</span>
+      <span style="display:flex;flex-direction:column;line-height:1.25;min-width:0">
+        <span class="brand__name" id="hdrname">revpro</span>
+        <span class="topbar__path" id="hdrhost"></span>
+      </span>
+    </span>
     <span class="topbar__path" id="hdrpath"></span>
     <div class="topbar__actions">
       <span class="topbar__user" id="hdruser"></span>
@@ -336,6 +369,7 @@ pre.code .k{color:#8fc7a5}
         <p class="navgroup__label">System</p>
         <div class="navlist">
           <button class="navlink" data-view="config">Config files</button>
+          <button class="navlink" data-view="branding">Branding</button>
           <button class="navlink" data-view="help">Help &amp; examples</button>
         </div>
       </div>
@@ -382,7 +416,14 @@ pre.code .k{color:#8fc7a5}
         </header>
         <div class="panel__body panel__body--flush tablewrap">
           <table id="sitestable">
-            <thead><tr><th>Site</th><th>Target</th><th>Flags</th><th>Certificate</th><th></th></tr></thead>
+            <thead><tr>
+              <th data-sort="fqdn">Site <span class="sortarrow"></span></th>
+              <th data-sort="group">Group <span class="sortarrow"></span></th>
+              <th data-sort="target">Target <span class="sortarrow"></span></th>
+              <th data-sort="flags">Flags <span class="sortarrow"></span></th>
+              <th data-sort="cert">Certificate <span class="sortarrow"></span></th>
+              <th></th>
+            </tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -636,6 +677,57 @@ pre.code .k{color:#8fc7a5}
         the port tools, and this UI's machine fields.</p>
     </section>
 
+    <!-- ============================ BRANDING ============================ -->
+    <section class="view" id="view-branding">
+      <div class="pagehead">
+        <p class="pagehead__kicker">system</p>
+        <h1 class="pagehead__title">Branding</h1>
+        <p class="pagehead__lede">Tell apart multiple revpro instances (e.g. one per machine)
+          at a glance — a custom name, an accent color, and an optional logo. Purely cosmetic;
+          nothing here touches sites.conf or nginx.</p>
+      </div>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Instance</h3></header>
+        <div class="panel__body">
+          <div class="formgrid">
+            <div class="field">
+              <label for="brand-name">Display name</label>
+              <input type="text" id="brand-name" maxlength="64" placeholder="revpro">
+            </div>
+            <div class="field">
+              <label for="brand-color">Accent color</label>
+              <input type="color" id="brand-color" value="#56775f">
+            </div>
+            <div class="field full">
+              <label>Machine hostname</label>
+              <p class="hint" id="brand-hostname" style="margin-top:0">—</p>
+            </div>
+          </div>
+          <div class="savebar">
+            <button class="btn btn--primary" id="brand-save">Save</button>
+            <span class="savemsg" id="brand-msg"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Logo</h3></header>
+        <div class="panel__body">
+          <div class="brandrow">
+            <img id="brand-logo-preview" class="brandlogo-preview" style="display:none" alt="Current logo">
+            <span id="brand-logo-empty" class="brandlogo-empty">RP</span>
+            <input type="file" id="brand-logo-file" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/x-icon">
+            <button class="btn" id="brand-logo-upload">Upload</button>
+            <button class="btn btn--danger" id="brand-logo-remove">Remove</button>
+          </div>
+          <p class="hint">PNG, JPEG, WebP, SVG, GIF or ICO, up to 512KB. Replaces the "RP" mark
+            in the header when set.</p>
+          <span class="savemsg" id="brand-logo-msg"></span>
+        </div>
+      </section>
+    </section>
+
     <!-- ============================ HELP ============================ -->
     <section class="view" id="view-help">
       <div class="pagehead">
@@ -803,6 +895,31 @@ docker compose up -d reverseproxy   <span class="c"># 3. certs exist → nginx s
   </div>
 </div>
 
+<div class="modal" id="sitemetamodal" role="dialog" aria-modal="true">
+  <div class="modal__overlay" id="sitemetamodal-overlay"></div>
+  <div class="modal__box">
+    <h2 class="modal__title">Edit site</h2>
+    <p class="modal__sub mono" id="sitemetamodal-fqdn"></p>
+    <div class="field" style="margin-bottom:.9rem">
+      <label for="sitemeta-name">Display name</label>
+      <input type="text" id="sitemeta-name" maxlength="128" placeholder="e.g. Family Photos">
+    </div>
+    <div class="field" style="margin-bottom:.9rem">
+      <label for="sitemeta-tags">Tags <span class="dim">(comma-separated)</span></label>
+      <input type="text" id="sitemeta-tags" placeholder="e.g. media, internal, backend">
+    </div>
+    <div class="field">
+      <label for="sitemeta-note">Note</label>
+      <textarea id="sitemeta-note" rows="3" maxlength="2000" style="min-height:auto"></textarea>
+    </div>
+    <div class="modal__actions">
+      <button class="btn" id="sitemeta-cancel">Cancel</button>
+      <button class="btn btn--primary" id="sitemeta-save">Save</button>
+    </div>
+    <span class="savemsg" id="sitemeta-msg"></span>
+  </div>
+</div>
+
 <script>
 "use strict";
 let S = {csrf:"", user:"", sites:[], categories:[], machines:{}, groups:[], slugs:[], setup:{}};
@@ -895,10 +1012,45 @@ function certChip(days){
   return chip(days + "d left", "ok");
 }
 
+let siteSort = {key:"fqdn", dir:1};
+
+function sortedSites(){
+  const list = (S.sites||[]).slice();
+  const {key, dir} = siteSort;
+  const flagKey = st => [st.auth?"a":"",st.https?"s":"",st.www?"w":"",st.local?"l":""].join("");
+  const val = st => {
+    switch(key){
+      case "group":  return (st.group||"") + "" + String(st.groupIndex||0).padStart(6,"0");
+      case "target": return st.target||"";
+      case "flags":  return flagKey(st);
+      case "cert":   return st.cert||"";
+      default:       return st.fqdn||"";
+    }
+  };
+  list.sort((a,b) => { const av=val(a), bv=val(b); return av<bv ? -dir : av>bv ? dir : 0; });
+  return list;
+}
+
+function updateSortIndicators(){
+  $$("#sitestable thead th[data-sort]").forEach(th => {
+    const on = th.dataset.sort === siteSort.key;
+    th.classList.toggle("is-sorted", on);
+    th.querySelector(".sortarrow").textContent = on ? (siteSort.dir === 1 ? "↑" : "↓") : "";
+  });
+}
+
+$("#sitestable thead").addEventListener("click", e => {
+  const th = e.target.closest("th[data-sort]"); if (!th) return;
+  if (siteSort.key === th.dataset.sort) siteSort.dir *= -1;
+  else siteSort = {key: th.dataset.sort, dir: 1};
+  renderSites();
+});
+
 function renderSites(){
   const tb = $("#sitestable tbody");
   tb.innerHTML = "";
   $("#siteserr").innerHTML = "";
+  updateSortIndicators();
   if (S.sitesError){
     const d = document.createElement("div");
     d.className = "error-box";
@@ -906,14 +1058,43 @@ function renderSites(){
     $("#siteserr").appendChild(d);
   }
   $("#sitecount").textContent = "· " + (S.sites||[]).length;
-  (S.sites||[]).forEach(st => {
+  sortedSites().forEach(st => {
     const tr = document.createElement("tr");
 
     const td1 = document.createElement("td"); td1.className = "mono";
+    if (st.name){
+      const nm = document.createElement("span");
+      nm.className = "sitename"; nm.textContent = st.name;
+      td1.appendChild(nm);
+    }
     const a = document.createElement("a");
     a.href = "https://" + st.fqdn; a.target = "_blank"; a.rel = "noreferrer";
     a.textContent = st.fqdn;
-    td1.appendChild(a); tr.appendChild(td1);
+    if (st.name) a.className = "dim";
+    td1.appendChild(a);
+    if (st.note){
+      const noteMark = document.createElement("span");
+      noteMark.className = "rownote"; noteMark.title = st.note;
+      noteMark.textContent = " \u{1F4AC}";
+      td1.appendChild(noteMark);
+    }
+    if ((st.tags||[]).length){
+      const tagsWrap = document.createElement("div");
+      tagsWrap.className = "rowtags";
+      st.tags.forEach(t => tagsWrap.appendChild(chip(t, "tag")));
+      td1.appendChild(tagsWrap);
+    }
+    tr.appendChild(td1);
+
+    const tdg = document.createElement("td");
+    const gm = document.createElement("span"); gm.className = "mono"; gm.textContent = st.group || "";
+    tdg.appendChild(gm);
+    if (st.groupLabel){
+      const gl = document.createElement("span");
+      gl.className = "grouplabel"; gl.textContent = st.groupLabel;
+      tdg.appendChild(gl);
+    }
+    tr.appendChild(tdg);
 
     const td2 = document.createElement("td"); td2.className = "mono";
     if (st.rawTarget){
@@ -950,6 +1131,10 @@ function renderSites(){
     const b2 = document.createElement("button"); b2.className = "btn btn--mini"; b2.textContent = "issue cert";
     b2.onclick = () => stream("/api/run", {action:"issue", targets:[st.cert]}, "issue " + st.cert);
     td5.appendChild(b2);
+    td5.appendChild(document.createTextNode(" "));
+    const b3 = document.createElement("button"); b3.className = "btn btn--mini"; b3.textContent = "edit";
+    b3.onclick = () => openSiteMeta(st.fqdn);
+    td5.appendChild(b3);
     tr.appendChild(td5);
 
     tb.appendChild(tr);
@@ -957,7 +1142,7 @@ function renderSites(){
   if (!(S.sites||[]).length && !S.sitesError){
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 5; td.className = "empty";
+    td.colSpan = 6; td.className = "empty";
     td.textContent = "No sites yet — add your first one under Add site.";
     tr.appendChild(td); tb.appendChild(tr);
   }
@@ -972,6 +1157,146 @@ function renderSites(){
     c.appendChild(t); c.appendChild(d); ml.appendChild(c);
   });
 }
+
+/* ---------- site metadata modal (name / tags / note) ---------- */
+let editingFqdn = null;
+
+function openSiteMeta(fqdn){
+  const st = (S.sites||[]).find(s => s.fqdn === fqdn);
+  if (!st) return;
+  editingFqdn = fqdn;
+  $("#sitemetamodal-fqdn").textContent = fqdn;
+  $("#sitemeta-name").value = st.name || "";
+  $("#sitemeta-tags").value = (st.tags||[]).join(", ");
+  $("#sitemeta-note").value = st.note || "";
+  $("#sitemeta-msg").textContent = ""; $("#sitemeta-msg").className = "savemsg";
+  $("#sitemetamodal").classList.add("is-on");
+  $("#sitemeta-name").focus();
+}
+function closeSiteMeta(){
+  $("#sitemetamodal").classList.remove("is-on");
+  editingFqdn = null;
+}
+$("#sitemetamodal-overlay").addEventListener("click", closeSiteMeta);
+$("#sitemeta-cancel").addEventListener("click", closeSiteMeta);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("#sitemetamodal").classList.contains("is-on")) closeSiteMeta();
+});
+$("#sitemeta-save").addEventListener("click", async () => {
+  if (!editingFqdn) return;
+  const msg = $("#sitemeta-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  const tags = $("#sitemeta-tags").value.split(",").map(s => s.trim()).filter(Boolean);
+  try {
+    await apiJSON("/api/sites/meta", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        fqdn: editingFqdn,
+        name: $("#sitemeta-name").value.trim(),
+        tags,
+        note: $("#sitemeta-note").value.trim(),
+      })});
+    await loadState();
+    closeSiteMeta();
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+/* ---------- branding ---------- */
+function hexToRgb(hex){
+  let h = hex.replace("#", "");
+  if (h.length === 3) h = h.split("").map(c => c+c).join("");
+  const n = parseInt(h.slice(0,6), 16);
+  if (Number.isNaN(n)) return null;
+  return [(n>>16)&255, (n>>8)&255, n&255].join(",");
+}
+
+function applyBrand(){
+  const b = S.brand || {};
+  const name = b.name || "revpro";
+  document.title = name;
+  $("#hdrname").textContent = name;
+  $("#hdrhost").textContent = b.hostname || "";
+
+  const root = document.documentElement.style;
+  if (b.color){
+    root.setProperty("--accent", b.color);
+    const rgb = hexToRgb(b.color);
+    if (rgb) root.setProperty("--accent-rgb", rgb);
+  } else {
+    root.removeProperty("--accent");
+    root.removeProperty("--accent-rgb");
+  }
+
+  const mark = $("#hdrmark");
+  mark.innerHTML = "";
+  if (b.hasLogo){
+    mark.style.padding = "0";
+    const img = document.createElement("img");
+    img.src = "/brand/logo?t=" + Date.now();
+    img.alt = name;
+    img.style.cssText = "width:100%;height:100%;object-fit:contain";
+    mark.appendChild(img);
+  } else {
+    mark.style.padding = "";
+    mark.textContent = name.replace(/[^A-Za-z0-9]/g, "").slice(0,2).toUpperCase() || "RP";
+  }
+}
+
+function renderBrandForm(){
+  const b = S.brand || {};
+  $("#brand-name").value = (b.name && b.name !== "revpro") ? b.name : "";
+  $("#brand-color").value = b.color || "#56775f";
+  $("#brand-hostname").textContent = b.hostname || "—";
+  const prev = $("#brand-logo-preview"), empty = $("#brand-logo-empty");
+  if (b.hasLogo){
+    prev.src = "/brand/logo?t=" + Date.now();
+    prev.style.display = ""; empty.style.display = "none";
+  } else {
+    prev.style.display = "none"; empty.style.display = "";
+  }
+}
+
+$("#brand-save").addEventListener("click", async () => {
+  const msg = $("#brand-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  try {
+    S.brand = await apiJSON("/api/brand", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({name: $("#brand-name").value.trim(), color: $("#brand-color").value})});
+    applyBrand(); renderBrandForm();
+    msg.textContent = "Saved"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+$("#brand-logo-upload").addEventListener("click", async () => {
+  const msg = $("#brand-logo-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  const f = $("#brand-logo-file").files[0];
+  if (!f){ msg.textContent = "Choose a file first"; msg.classList.add("bad"); return; }
+  const fd = new FormData(); fd.append("logo", f);
+  try {
+    S.brand = await apiJSON("/api/brand/logo", {method:"POST", body: fd});
+    applyBrand(); renderBrandForm();
+    $("#brand-logo-file").value = "";
+    msg.textContent = "Uploaded"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+$("#brand-logo-remove").addEventListener("click", async () => {
+  const msg = $("#brand-logo-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  try {
+    S.brand = await apiJSON("/api/brand/logo/remove", {method:"POST"});
+    applyBrand(); renderBrandForm();
+    msg.textContent = "Removed"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
 
 function renderPorts(){
   $("#portserr").innerHTML = "";
@@ -1096,6 +1421,7 @@ async function loadState(){
     S = await apiJSON("/api/state");
     $("#hdruser").textContent = S.authDisabled ? "no-auth" : S.user;
     $("#hdrpath").textContent = S.revproDir;
+    applyBrand();
     renderSites();
     renderPorts();
     renderSetup();
@@ -1109,6 +1435,7 @@ function showView(name){
   $$(".navlink").forEach(x => x.classList.toggle("is-active", x.dataset.view === name));
   $$(".view").forEach(v => v.classList.toggle("is-active", v.id === "view-" + name));
   if (name === "config") { loadConf("sites"); loadConf("ports"); loadConf("machines"); }
+  if (name === "branding") { renderBrandForm(); }
   window.scrollTo({top:0});
 }
 $("#nav").addEventListener("click", e => {

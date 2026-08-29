@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -111,8 +112,13 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("POST /api/conf", ws.auth.requireSession(ws.handleConfSave))
 	mux.HandleFunc("POST /api/run", ws.auth.requireSession(ws.handleRun))
 	mux.HandleFunc("POST /api/sites/add", ws.auth.requireSession(ws.handleAddSite))
+	mux.HandleFunc("POST /api/sites/meta", ws.auth.requireSession(ws.handleSiteMeta))
 	mux.HandleFunc("GET /api/ports/suggest", ws.auth.requireSession(ws.handlePortSuggest))
 	mux.HandleFunc("GET /api/ports/check", ws.auth.requireSession(ws.handlePortCheck))
+	mux.HandleFunc("POST /api/brand", ws.auth.requireSession(ws.handleBrandSave))
+	mux.HandleFunc("POST /api/brand/logo", ws.auth.requireSession(ws.handleBrandLogoUpload))
+	mux.HandleFunc("POST /api/brand/logo/remove", ws.auth.requireSession(ws.handleBrandLogoRemove))
+	mux.HandleFunc("GET /brand/logo", ws.auth.requireSession(ws.handleBrandLogoGet))
 	return mux
 }
 
@@ -225,15 +231,21 @@ func (ws *webServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request) 
 // ---------- state ----------
 
 type siteJSON struct {
-	FQDN      string `json:"fqdn"`
-	Target    string `json:"target"`
-	RawTarget string `json:"rawTarget,omitempty"` // set when a slug was used
-	Cert      string `json:"cert"`
-	CertDays  int    `json:"certDays"` // -1 = missing, -2 = unknown (CERTS_SUB unset)
-	Auth      bool   `json:"auth"`
-	HTTPS     bool   `json:"https"`
-	WWW       bool   `json:"www"`
-	Local     bool   `json:"local"`
+	FQDN       string   `json:"fqdn"`
+	Target     string   `json:"target"`
+	RawTarget  string   `json:"rawTarget,omitempty"` // set when a slug was used
+	Cert       string   `json:"cert"`
+	CertDays   int      `json:"certDays"` // -1 = missing, -2 = unknown (CERTS_SUB unset)
+	Auth       bool     `json:"auth"`
+	HTTPS      bool     `json:"https"`
+	WWW        bool     `json:"www"`
+	Local      bool     `json:"local"`
+	Group      string   `json:"group"`                // base domain from its ==domain header
+	GroupIndex int      `json:"groupIndex"`           // which header block, in file order
+	GroupLabel string   `json:"groupLabel,omitempty"` // the '# ...' comment above that header
+	Name       string   `json:"name,omitempty"`       // from site-meta.json, UI-only
+	Tags       []string `json:"tags,omitempty"`       // from site-meta.json, UI-only
+	Note       string   `json:"note,omitempty"`       // from site-meta.json, UI-only
 }
 
 func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webSession) {
@@ -245,6 +257,12 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 		"sitesFile":    ws.c.configFile,
 		"portsFile":    ws.c.portsFile(),
 		"http3":        ws.c.http3,
+		"brand":        ws.c.currentBrand(),
+	}
+
+	meta, err := ws.c.loadSiteMeta()
+	if err != nil {
+		meta = map[string]siteMeta{}
 	}
 
 	sites, err := ws.c.parseSites()
@@ -270,6 +288,10 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 			sj := siteJSON{
 				FQDN: st.fqdn, Target: st.target, Cert: st.certName, CertDays: days,
 				Auth: st.flags.auth, HTTPS: st.flags.https, WWW: st.flags.www, Local: st.flags.local,
+				Group: st.group, GroupIndex: st.groupIndex, GroupLabel: st.groupLabel,
+			}
+			if m, ok := meta[st.fqdn]; ok {
+				sj.Name, sj.Tags, sj.Note = m.Name, m.Tags, m.Note
 			}
 			if st.rawTarget != st.target {
 				sj.RawTarget = st.rawTarget
@@ -591,6 +613,140 @@ func (ws *webServer) handleAddSite(w http.ResponseWriter, r *http.Request, _ *we
 		args = append(args, `--cert=`+req.Cert)
 	}
 	ws.streamCommand(w, r, args)
+}
+
+// handleSiteMeta upserts one site's UI-only name/tags/note in site-meta.json.
+// The fqdn must belong to an actual sites.conf entry — this file is metadata
+// about real sites, not a place to stash arbitrary keys.
+func (ws *webServer) handleSiteMeta(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		FQDN string   `json:"fqdn"`
+		Name string   `json:"name"`
+		Tags []string `json:"tags"`
+		Note string   `json:"note"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	sites, err := ws.c.parseSites()
+	if err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, "sites.conf: "+err.Error())
+		return
+	}
+	found := false
+	for _, st := range sites {
+		if st.fqdn == req.FQDN {
+			found = true
+			break
+		}
+	}
+	if !found {
+		httpErrJSON(w, http.StatusNotFound, "no such site: "+req.FQDN)
+		return
+	}
+	if len(req.Name) > 128 {
+		httpErrJSON(w, http.StatusBadRequest, "name too long")
+		return
+	}
+	if len(req.Note) > 2000 {
+		httpErrJSON(w, http.StatusBadRequest, "note too long")
+		return
+	}
+	if len(req.Tags) > 32 {
+		httpErrJSON(w, http.StatusBadRequest, "too many tags")
+		return
+	}
+	if err := ws.c.setSiteMeta(req.FQDN, siteMeta{Name: req.Name, Tags: req.Tags, Note: req.Note}); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- branding ----------
+
+func (ws *webServer) handleBrandSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Name  string `json:"name"`
+		Color string `json:"color"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	// Validate the color before persisting anything, so a bad value doesn't
+	// leave the name written but the color rejected.
+	if err := ws.c.setBrandColor(req.Color); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ws.c.setBrandName(req.Name); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, ws.c.currentBrand())
+}
+
+// allowedLogoTypes is deliberately short: raster/vector formats a browser
+// can render directly in an <img>, nothing that needs server-side decoding.
+var allowedLogoTypes = map[string]bool{
+	"image/png": true, "image/jpeg": true, "image/webp": true,
+	"image/svg+xml": true, "image/gif": true, "image/x-icon": true,
+}
+
+const maxLogoSize = 512 << 10 // 512KB — this is an icon-sized mark, not a hero image
+
+func (ws *webServer) handleBrandLogoUpload(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxLogoSize+4096)
+	if err := r.ParseMultipartForm(maxLogoSize + 4096); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "upload too large or malformed (max 512KB)")
+		return
+	}
+	file, header, err := r.FormFile("logo")
+	if err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "missing 'logo' file")
+		return
+	}
+	defer file.Close()
+	if header.Size > maxLogoSize {
+		httpErrJSON(w, http.StatusBadRequest, "logo too large (max 512KB)")
+		return
+	}
+	ct := header.Header.Get("Content-Type")
+	if !allowedLogoTypes[ct] {
+		httpErrJSON(w, http.StatusBadRequest, "unsupported image type: "+ct)
+		return
+	}
+	data := make([]byte, header.Size)
+	if _, err := io.ReadFull(file, data); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "failed to read upload")
+		return
+	}
+	if err := ws.c.saveBrandLogo(data, ct); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, ws.c.currentBrand())
+}
+
+func (ws *webServer) handleBrandLogoRemove(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	if err := ws.c.removeBrandLogo(); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, ws.c.currentBrand())
+}
+
+func (ws *webServer) handleBrandLogoGet(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	data, ct, ok := ws.c.loadBrandLogo()
+	if !ok {
+		http.NotFound(w, nil)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Write(data)
 }
 
 // diffTokens renders the +x/-x tokens needed to get from base to want.

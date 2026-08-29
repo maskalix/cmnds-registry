@@ -62,11 +62,14 @@ func (f *siteFlags) apply(tokens []string) {
 
 // site is a fully-resolved entry from sites.conf.
 type site struct {
-	fqdn      string // e.g. api.example.tld (apex → example.tld)
-	target    string // server:port, machine slug resolved
-	rawTarget string // target as written in sites.conf (may use a slug)
-	certName  string // cert folder/name
-	flags     siteFlags
+	fqdn       string // e.g. api.example.tld (apex → example.tld)
+	target     string // server:port, machine slug resolved
+	rawTarget  string // target as written in sites.conf (may use a slug)
+	certName   string // cert folder/name
+	flags      siteFlags
+	group      string // the base domain from this site's ==domain header
+	groupIndex int    // 0-based ordinal of the ==domain header block this came from
+	groupLabel string // the '# ...' comment line immediately above that header, if any
 }
 
 // parseSites reads sites.conf into resolved site records. Targets written
@@ -87,16 +90,32 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 	var sites []site
 	var groupDomain string
 	var group groupInfo
+	groupIndex := -1
+	groupLabel := ""
+	pendingComment := "" // most recent full-line comment, cleared by any non-comment line
 
 	sc := bufio.NewScanner(f)
 	lineNo := 0
 	for sc.Scan() {
 		lineNo++
 		raw := sc.Text()
+		rawTrimmed := strings.TrimSpace(raw)
+
+		// A full-line comment is remembered as the label for the next group
+		// header (e.g. "# lnln.eu — public sites" above "==lnln.eu <-w>").
+		if strings.HasPrefix(rawTrimmed, "#") {
+			pendingComment = strings.TrimSpace(strings.TrimPrefix(rawTrimmed, "#"))
+			continue
+		}
+		if rawTrimmed == "" {
+			continue
+		}
+
 		// Strip trailing comments (a '#' not inside a quoted --cert).
 		line := stripComment(raw)
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
+			pendingComment = ""
 			continue
 		}
 
@@ -109,8 +128,12 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 			if strings.ContainsAny(group.machine, ": ") {
 				return nil, fmt.Errorf("line %d: bad group machine %q (a host or a machines.conf slug, no port)", lineNo, group.machine)
 			}
+			groupIndex++
+			groupLabel = pendingComment
+			pendingComment = ""
 			continue
 		}
+		pendingComment = ""
 
 		if groupDomain == "" {
 			return nil, fmt.Errorf("line %d: site %q before any '==domain' header", lineNo, trimmed)
@@ -154,11 +177,14 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 		}
 
 		sites = append(sites, site{
-			fqdn:      fqdn,
-			target:    resolveTarget(slugs, expanded),
-			rawTarget: target,
-			certName:  certName,
-			flags:     fl,
+			fqdn:       fqdn,
+			target:     resolveTarget(slugs, expanded),
+			rawTarget:  target,
+			group:      groupDomain,
+			groupIndex: groupIndex,
+			groupLabel: groupLabel,
+			certName:   certName,
+			flags:      fl,
 		})
 	}
 	if err := sc.Err(); err != nil {

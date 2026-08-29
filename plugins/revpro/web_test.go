@@ -321,3 +321,114 @@ func TestAudContains(t *testing.T) {
 		t.Error("mismatched aud must not match")
 	}
 }
+
+func TestSiteMetaEndpoint(t *testing.T) {
+	_, srv := newTestServer(t)
+	ck := login(t, srv)
+	csrf := csrfFor(t, srv, ck)
+
+	// Unknown fqdn must be rejected — this file only annotates real sites.
+	res := postJSON(t, srv, ck, csrf, "/api/sites/meta",
+		`{"fqdn":"nope.example.tld","name":"X"}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown fqdn: got %d, want 404", res.StatusCode)
+	}
+
+	res = postJSON(t, srv, ck, csrf, "/api/sites/meta",
+		`{"fqdn":"app.example.tld","name":"App Dashboard","tags":["internal","internal","Docs"],"note":"handy"}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("valid meta save: got %d", res.StatusCode)
+	}
+
+	res = authedGet(t, srv, ck, "/api/state")
+	defer res.Body.Close()
+	var state struct {
+		Sites []struct {
+			FQDN string   `json:"fqdn"`
+			Name string   `json:"name"`
+			Tags []string `json:"tags"`
+			Note string   `json:"note"`
+		} `json:"sites"`
+	}
+	json.NewDecoder(res.Body).Decode(&state)
+	var got *struct {
+		FQDN string
+		Name string
+		Tags []string
+		Note string
+	}
+	for _, s := range state.Sites {
+		if s.FQDN == "app.example.tld" {
+			s := s
+			got = &struct {
+				FQDN string
+				Name string
+				Tags []string
+				Note string
+			}{s.FQDN, s.Name, s.Tags, s.Note}
+		}
+	}
+	if got == nil || got.Name != "App Dashboard" || got.Note != "handy" {
+		t.Fatalf("meta not reflected in state: %+v", got)
+	}
+	if len(got.Tags) != 2 || got.Tags[0] != "Docs" || got.Tags[1] != "internal" {
+		t.Errorf("tags not deduped/sorted: %v", got.Tags)
+	}
+}
+
+// stubCmnds puts a fake 'cmnds' on PATH that backs 'config read/write' with
+// a plain key=value file, so setBrandName/setBrandColor (which shell out to
+// the real cmnds binary in production) can be exercised end-to-end in tests.
+func stubCmnds(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	store := filepath.Join(dir, "store.conf")
+	os.WriteFile(store, nil, 0o644)
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2\" in\n" +
+		"  \"config read\") grep \"^$3=\" " + store + " 2>/dev/null | tail -1 | cut -d= -f2- ;;\n" +
+		"  \"config write\") (grep -v \"^$3=\" " + store + " 2>/dev/null; echo \"$3=$4\") > " + store + ".tmp && mv " + store + ".tmp " + store + " ;;\n" +
+		"esac\n"
+	bin := filepath.Join(dir, "cmnds")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+}
+
+func TestBrandEndpoints(t *testing.T) {
+	stubCmnds(t)
+	_, srv := newTestServer(t)
+	ck := login(t, srv)
+	csrf := csrfFor(t, srv, ck)
+
+	// Bad color rejected, nothing persisted.
+	res := postJSON(t, srv, ck, csrf, "/api/brand", `{"name":"Reach Proxy","color":"notacolor"}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad color: got %d, want 400", res.StatusCode)
+	}
+
+	res = postJSON(t, srv, ck, csrf, "/api/brand", `{"name":"Reach Proxy","color":"#4f7cff"}`)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("valid brand save: got %d", res.StatusCode)
+	}
+	var b brandInfo
+	json.NewDecoder(res.Body).Decode(&b)
+	if b.Name != "Reach Proxy" || b.Color != "#4f7cff" {
+		t.Errorf("brand not persisted: %+v", b)
+	}
+	if b.Hostname == "" {
+		t.Error("expected Hostname to be populated")
+	}
+
+	// No logo saved yet.
+	res2 := authedGet(t, srv, ck, "/brand/logo")
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusNotFound {
+		t.Errorf("logo before upload: got %d, want 404", res2.StatusCode)
+	}
+}
