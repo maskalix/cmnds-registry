@@ -617,6 +617,46 @@ pre.code .k{color:#8fc7a5}
       </form>
       <p class="hint">Self-signed CA generation (<code>revpro certgen</code>) and initial folder setup
         (<code>revpro init setup</code>) prompt interactively — run those from the CLI.</p>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Auto-renewal</h3></header>
+        <div class="panel__body">
+          <p id="renew-status" class="hint" style="margin-top:0"></p>
+          <p class="hint">Runs via a <code>revpro renew --daemon</code> service on the host —
+            checks once a day, renews anything inside the renewal window, then regenerates and
+            reloads automatically. This just shows the last recorded check; the
+            <code>Renew certs</code> button on the Sites view triggers one immediately.</p>
+        </div>
+      </section>
+
+      <form class="panel" id="wildcardform" data-tour="wildcard">
+        <header class="panel__head"><h3 class="panel__title">Wildcard certificate (DNS-01)</h3></header>
+        <div class="panel__body">
+          <p id="wildcard-unready" class="hint" style="display:none;color:var(--bad)">
+            Needs REVPRO_WEDOS_USER and REVPRO_WEDOS_PASSWORD configured (ACME can only validate
+            a wildcard via DNS-01 — never HTTP-01). Set them with <code>cmnds config write</code>
+            on the host.
+          </p>
+          <div class="formgrid">
+            <div class="field">
+              <label for="wc-domain">Domain (apex)</label>
+              <input type="text" id="wc-domain" placeholder="lnln.eu" required>
+            </div>
+            <div class="field">
+              <label for="wc-cert">Cert name <span class="dim">(optional, defaults to domain)</span></label>
+              <input type="text" id="wc-cert" placeholder="lnln.eu">
+            </div>
+            <div class="full">
+              <label class="inline-check"><input type="checkbox" id="wc-force"> force reissue even if still valid</label>
+            </div>
+            <div class="full"><button type="submit" class="btn btn--primary" id="wc-submit">Issue wildcard</button></div>
+          </div>
+          <p class="hint">Issues one cert covering both <code>domain</code> and
+            <code>*.domain</code>, then registers it so future <code>issue</code>/<code>renew</code>
+            runs keep it current automatically — same as any site cert.</p>
+          <div id="wildcard-list"></div>
+        </div>
+      </form>
     </section>
 
     <!-- ============================ CONFIG ============================ -->
@@ -1425,6 +1465,7 @@ async function loadState(){
     renderSites();
     renderPorts();
     renderSetup();
+    renderCertTools();
   } catch(e){
     consoleOpen(); consoleAppend("[error] state: " + e.message + "\n");
   }
@@ -1540,6 +1581,60 @@ $("#httpform").addEventListener("submit", e => {
   stream("/api/run", {action:"http", httpVer: $("#http-ver").value, url: $("#http-url").value.trim()},
          "http/" + $("#http-ver").value + " check");
 });
+
+/* ---------- wildcard certs (DNS-01) + renewal status ---------- */
+$("#wildcardform").addEventListener("submit", e => {
+  e.preventDefault();
+  const domain = $("#wc-domain").value.trim();
+  stream("/api/run", {
+    action: "issue-wildcard",
+    domain,
+    certName: $("#wc-cert").value.trim(),
+    force: $("#wc-force").checked,
+  }, "issue wildcard " + domain);
+});
+
+function timeAgo(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (secs < 90) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 90) return mins + "m ago";
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return hours + "h ago";
+  return Math.floor(hours / 24) + "d ago";
+}
+
+function renderCertTools(){
+  const ready = !!S.wedosReady;
+  $("#wildcard-unready").style.display = ready ? "none" : "";
+  $("#wc-submit").disabled = !ready;
+
+  const rs = $("#renew-status");
+  if (S.renewStatus){
+    const r = S.renewStatus;
+    rs.textContent = "Last check " + timeAgo(r.at) + " — " + r.renewed + " renewed, " +
+      r.skipped + " skipped, " + r.failed + " failed.";
+  } else {
+    rs.textContent = "No renewal check recorded yet — run 'revpro renew' once, or set up the daemon service.";
+  }
+
+  const list = $("#wildcard-list");
+  list.innerHTML = "";
+  const wc = S.wildcardCerts || [];
+  if (!wc.length) return;
+  const h = document.createElement("p");
+  h.className = "hint"; h.style.marginTop = "1rem";
+  h.innerHTML = "<strong>Registered wildcards:</strong>";
+  list.appendChild(h);
+  wc.forEach(w => {
+    const row = document.createElement("div");
+    row.className = "hint";
+    row.textContent = "*." + w.domain + " → cert \"" + w.cert + "\"";
+    list.appendChild(row);
+  });
+}
 
 /* ---------- config editors ---------- */
 async function loadConf(file){

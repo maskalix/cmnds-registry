@@ -69,14 +69,15 @@ func (u *acmeUser) GetPrivateKey() crypto.Signer           { return u.key }
 
 // issuer holds the resolved ACME settings and the lego client.
 type issuer struct {
-	email    string
-	port     string // standalone HTTP-01 listen port (used when webroot is unset)
-	webroot  string // if set, serve HTTP-01 challenge from this webroot instead
-	staging  bool
-	acmeDir  string
-	certsSub string
-	client   *lego.Client
-	user     *acmeUser
+	email       string
+	port        string // standalone HTTP-01 listen port (used when webroot is unset)
+	webroot     string // if set, serve HTTP-01 challenge from this webroot instead
+	staging     bool
+	acmeDir     string
+	certsSub    string
+	client      *lego.Client
+	user        *acmeUser
+	hasWedosDNS bool // true once a DNS-01 (WEDOS) solver is registered — needed for wildcards
 }
 
 func (c *proxyConfig) newIssuer() (*issuer, error) {
@@ -180,6 +181,20 @@ func (iss *issuer) connect() error {
 		if err := client.Challenge.SetHTTP01Provider(http01.NewProviderServer("", iss.port)); err != nil {
 			return fmt.Errorf("http-01 standalone: %w", err)
 		}
+	}
+
+	// DNS-01 (WEDOS), registered alongside HTTP-01 whenever credentials are
+	// configured. lego prefers whichever challenge type the ACME server
+	// offers that also has a registered solver, and sorts by type name when
+	// both are available — "http-01" sorts ahead of "dns-01", so ordinary
+	// domains keep using HTTP-01 exactly as before. Wildcard names (*.domain)
+	// are never offered http-01 by the ACME server at all, so they fall
+	// through to DNS-01 automatically — no separate mode switch needed here.
+	if wedos, err := newWedosProvider(); err == nil {
+		if err := client.Challenge.SetDNS01Provider(wedos); err != nil {
+			return fmt.Errorf("dns-01 wedos: %w", err)
+		}
+		iss.hasWedosDNS = true
 	}
 	iss.client = client
 
@@ -325,8 +340,11 @@ type certSite struct {
 }
 
 // certSites resolves sites.conf into per-certificate issuance jobs, deduping by
-// certificate name. SANs aggregate every domain (and its www. variant if the
-// www flag is set) that maps to the same cert name.
+// certificate name, plus any registered wildcard certs (see wildcardCerts.go)
+// — so a wildcard obtained once via 'issue --wildcard' is automatically kept
+// current by every later 'issue' and 'renew' run, the same as site certs.
+// SANs aggregate every domain (and its www. variant if the www flag is set)
+// that maps to the same cert name.
 func (c *proxyConfig) certSites() []certSite {
 	index := map[string]*certSite{}
 	var order []string
@@ -346,6 +364,13 @@ func (c *proxyConfig) certSites() []certSite {
 	for _, name := range order {
 		out = append(out, *index[name])
 	}
+	for _, w := range c.loadWildcardCerts() {
+		out = append(out, certSite{
+			domain:   w.Domain,
+			certName: w.Cert,
+			sans:     []string{w.Domain, "*." + w.Domain},
+		})
+	}
 	return out
 }
 
@@ -354,20 +379,44 @@ func (c *proxyConfig) certSites() []certSite {
 // `revpro issue` can't burn ACME rate limits on fresh certs. Pass --force to
 // reissue everything regardless of expiry. With positional names it limits the
 // run to those certificates; otherwise it processes every site in the config.
+//
+// `--wildcard <domain> [--cert <name>]` issues a one-off cert covering
+// <domain> and *.<domain> via DNS-01 (requires a DNS-01 provider — currently
+// WEDOS) and registers it so future 'issue'/'renew' runs keep it current
+// automatically, the same as any site-derived cert.
 func (c *proxyConfig) issueCmd(args []string) {
 	force := false
+	var wildcardDomain, wildcardCert string
 	var names []string
-	for _, a := range args {
-		if a == "--force" || a == "-f" {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--force", "-f":
 			force = true
-			continue
+		case "--wildcard":
+			i++
+			if i >= len(args) {
+				fail("--wildcard needs a domain, e.g. --wildcard lnln.eu")
+			}
+			wildcardDomain = args[i]
+		case "--cert":
+			i++
+			if i >= len(args) {
+				fail("--cert needs a name")
+			}
+			wildcardCert = args[i]
+		default:
+			names = append(names, args[i])
 		}
-		names = append(names, a)
 	}
 
 	iss, err := c.newIssuer()
 	if err != nil {
 		fail("%v", err)
+	}
+
+	if wildcardDomain != "" {
+		c.issueWildcard(iss, wildcardDomain, wildcardCert, force)
+		return
 	}
 
 	renewDays := defaultRenewDays
@@ -421,6 +470,43 @@ func (c *proxyConfig) issueCmd(args []string) {
 	}
 }
 
+// issueWildcard issues (or, if already valid, skips) a single wildcard
+// certificate covering both <domain> and *.<domain> via DNS-01, then
+// registers it so it's automatically included in every future issue/renew.
+func (c *proxyConfig) issueWildcard(iss *issuer, domain, certName string, force bool) {
+	if !iss.hasWedosDNS {
+		fail("wildcard issuance needs a DNS-01 provider — run " +
+			"'cmnds config write REVPRO_WEDOS_USER you@example.com' and " +
+			"'cmnds config write REVPRO_WEDOS_PASSWORD <wapi password>'")
+	}
+	if certName == "" {
+		certName = domain
+	}
+
+	renewDays := defaultRenewDays
+	if v := configRead("REVPRO_RENEW_DAYS"); v != "" {
+		if n := atoiSafe(v); n > 0 {
+			renewDays = n
+		}
+	}
+	if !force {
+		if days, have := iss.daysUntilExpiry(certName); have && days >= renewDays {
+			ok2("%s: %dd left (>= %dd) — skip (use --force to reissue)", certName, days, renewDays)
+			return
+		}
+	}
+
+	sans := []string{domain, "*." + domain}
+	info("Issuing wildcard %s for %v (DNS-01 via WEDOS)...", certName, sans)
+	if err := iss.obtain(certName, sans); err != nil {
+		fail("issue %s: %v", certName, err)
+	}
+	if err := c.registerWildcardCert(domain, certName); err != nil {
+		warn("issued %s but failed to register it for auto-renewal: %v", certName, err)
+	}
+	ok("Issued %s → %s/%s/ (registered for auto-renewal)", certName, iss.certsSub, certName)
+}
+
 // renewCmd renews certs nearing expiry. One-shot by default; with --daemon it
 // loops, waking once a day. After any renewal it regenerates configs + reloads.
 func (c *proxyConfig) renewCmd(args []string) {
@@ -466,6 +552,8 @@ func (c *proxyConfig) renewCmd(args []string) {
 			ok2("Renewed %s", s.certName)
 			renewed++
 		}
+
+		c.writeRenewStatus(renewed, skipped, failed)
 
 		if renewed > 0 {
 			info("%d renewed, %d skipped, %d failed — regenerating + reloading nginx", renewed, skipped, failed)

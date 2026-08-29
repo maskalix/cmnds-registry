@@ -250,14 +250,19 @@ type siteJSON struct {
 
 func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webSession) {
 	state := map[string]any{
-		"user":         s.user,
-		"csrf":         s.csrf,
-		"authDisabled": ws.auth.disabled,
-		"revproDir":    ws.c.mainFolder,
-		"sitesFile":    ws.c.configFile,
-		"portsFile":    ws.c.portsFile(),
-		"http3":        ws.c.http3,
-		"brand":        ws.c.currentBrand(),
+		"user":          s.user,
+		"csrf":          s.csrf,
+		"authDisabled":  ws.auth.disabled,
+		"revproDir":     ws.c.mainFolder,
+		"sitesFile":     ws.c.configFile,
+		"portsFile":     ws.c.portsFile(),
+		"http3":         ws.c.http3,
+		"brand":         ws.c.currentBrand(),
+		"wedosReady":    configRead("REVPRO_WEDOS_USER") != "" && configRead("REVPRO_WEDOS_PASSWORD") != "",
+		"wildcardCerts": ws.c.loadWildcardCerts(),
+	}
+	if st, ok := ws.c.loadRenewStatus(); ok {
+		state["renewStatus"] = st
 	}
 
 	meta, err := ws.c.loadSiteMeta()
@@ -492,6 +497,7 @@ func (ws *webServer) handleRun(w http.ResponseWriter, r *http.Request, _ *webSes
 		Targets   []string `json:"targets"`
 		Force     bool     `json:"force"`
 		Domain    string   `json:"domain"`
+		CertName  string   `json:"certName"`
 		CertFlags []string `json:"certFlags"`
 		HTTPVer   string   `json:"httpVer"`
 		URL       string   `json:"url"`
@@ -517,6 +523,23 @@ func (ws *webServer) handleRun(w http.ResponseWriter, r *http.Request, _ *webSes
 				return
 			}
 			args = append(args, t)
+		}
+
+	case req.Action == "issue-wildcard":
+		if !domainRe.MatchString(req.Domain) {
+			httpErrJSON(w, http.StatusBadRequest, "bad domain")
+			return
+		}
+		args = append(args, "issue", "--wildcard", req.Domain)
+		if req.Force {
+			args = append(args, "--force")
+		}
+		if req.CertName != "" {
+			if !nameRe.MatchString(req.CertName) {
+				httpErrJSON(w, http.StatusBadRequest, "bad cert name")
+				return
+			}
+			args = append(args, "--cert", req.CertName)
 		}
 
 	case req.Action == "cert":
