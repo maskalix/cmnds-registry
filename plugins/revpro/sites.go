@@ -18,7 +18,8 @@
 //	l  local-only (include local.conf)
 //
 // Global defaults: w ON, a/s/l OFF. `@` means the apex domain itself.
-// Cert name defaults to the site's full domain unless --cert="name" is given.
+// Cert name defaults to the site's full domain unless --cert="name" is given
+// on the line, or on the group header as a group-wide default.
 package main
 
 import (
@@ -146,6 +147,9 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 			fqdn = sub + "." + groupDomain
 		}
 		if certName == "" {
+			certName = group.cert
+		}
+		if certName == "" {
 			certName = fqdn
 		}
 
@@ -167,11 +171,14 @@ func (c *proxyConfig) parseSites() ([]site, error) {
 type groupInfo struct {
 	flags   siteFlags
 	machine string // default machine for port-only targets ("" = none)
+	cert    string // default cert name for lines with no --cert= of their own ("" = none)
 }
 
-// parseGroupHeader parses a trimmed "==domain.tld [machine] <+a +s>" header
-// line into the domain and its group defaults. [machine] and <flags> may
-// appear in either order; the machine is a host or a machines.conf slug.
+// parseGroupHeader parses a trimmed "==domain.tld [machine] <+a +s> --cert=name"
+// header line into the domain and its group defaults. [machine] and <flags>
+// may appear in either order; the machine is a host or a machines.conf slug.
+// A trailing --cert="name" sets the default cert for every line in the group
+// that doesn't specify its own.
 func parseGroupHeader(trimmed string) (string, groupInfo) {
 	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "=="))
 	gi := groupInfo{flags: defaultFlags()}
@@ -184,6 +191,11 @@ func parseGroupHeader(trimmed string) (string, groupInfo) {
 	if i := strings.Index(rest, "<"); i >= 0 {
 		if j := strings.Index(rest, ">"); j > i {
 			gi.flags.apply(strings.Fields(rest[i+1 : j]))
+			for _, tok := range strings.Fields(rest[j+1:]) {
+				if strings.HasPrefix(tok, "--cert=") {
+					gi.cert = strings.Trim(strings.TrimPrefix(tok, "--cert="), `"'`)
+				}
+			}
 		}
 		rest = strings.TrimSpace(rest[:i])
 	}
@@ -315,19 +327,51 @@ func (c *proxyConfig) convertCmd() {
 	var b strings.Builder
 	b.WriteString(sitesTutorial)
 	for _, base := range order {
-		b.WriteString(fmt.Sprintf("\n==%s\n", base))
-		for _, l := range groups[base] {
-			toks := flagTokens(l.flags)
+		entries := groups[base]
+
+		// The legacy format has no www concept at all — sites were never
+		// auto-served on www.<domain>. Converted groups default -w so
+		// behavior matches what was actually live, instead of silently
+		// picking up sites.conf's own www-on default.
+		header := fmt.Sprintf("==%s <-w>", base)
+
+		// Hoist the group's most common cert name into the header so
+		// per-line --cert= is only needed where a site's cert actually
+		// differs from the rest of the group (e.g. one shared domain cert
+		// covering most subdomains, per-fqdn certs for the rest).
+		counts := map[string]int{}
+		for _, l := range entries {
+			counts[l.certName]++
+		}
+		groupCert, best := "", 1 // only hoist a cert shared by more than one site
+		for _, cert := range sortedKeys(counts) {
+			if n := counts[cert]; n > best {
+				groupCert, best = cert, n
+			}
+		}
+		if groupCert != "" {
+			header += fmt.Sprintf(` --cert="%s"`, groupCert)
+		}
+		b.WriteString("\n" + header + "\n")
+
+		for _, l := range entries {
+			toks := flagTokensNoWWW(l.flags)
 			line := fmt.Sprintf("%-12s %-24s", l.sub, l.target)
 			if toks != "" {
 				line += " " + toks
 			}
-			// Preserve an explicit cert name only when it differs from the fqdn default.
+			// Preserve an explicit cert name only when it differs from
+			// whatever the line would otherwise default to (the hoisted
+			// group cert, or the site's own fqdn).
 			fqdn := base
 			if l.sub != "@" {
 				fqdn = l.sub + "." + base
 			}
-			if l.certName != "" && l.certName != fqdn {
+			defaultCert := fqdn
+			if groupCert != "" {
+				defaultCert = groupCert
+			}
+			if l.certName != "" && l.certName != defaultCert {
 				line += fmt.Sprintf(` --cert="%s"`, l.certName)
 			}
 			b.WriteString(strings.TrimRight(line, " ") + "\n")
@@ -365,6 +409,35 @@ func flagTokens(f siteFlags) string {
 	return strings.Join(t, " ")
 }
 
+// flagTokensNoWWW is flagTokens without the www token, for convertCmd: the
+// legacy format has no www concept, so the group header's own <-w> already
+// says everything there is to say about it — per-line output would just be
+// noise (and every legacy site would otherwise render a redundant -w).
+func flagTokensNoWWW(f siteFlags) string {
+	var t []string
+	if f.auth {
+		t = append(t, "+a")
+	}
+	if f.https {
+		t = append(t, "+s")
+	}
+	if f.local {
+		t = append(t, "+l")
+	}
+	return strings.Join(t, " ")
+}
+
+// sortedKeys returns a map's keys sorted, for deterministic iteration when
+// picking among tied counts.
+func sortedKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // baseDomain returns the registrable-ish base (last two labels). Good enough for
 // the common example.tld / sub.example.tld case; multi-label TLDs would need a
 // public-suffix list, out of scope here.
@@ -399,6 +472,10 @@ const sitesTutorial = `#########################################################
 #   grafana  :3000                 # ":port" works too → A:3000
 #   backup   B:9000                # full target still overrides the group machine
 #
+#   ==shared.tld <-w> --cert="shared.tld"   # group-wide default cert
+#   api      10.0.0.1:8080         # inherits cert "shared.tld"
+#   admin    10.0.0.2:8080  --cert="admin-only"   # overrides the group default
+#
 # Columns:  <name>  <target>  [flags]  [--cert="name"]  [# comment]
 #   name      subdomain label, or '@' for the apex domain
 #   target    upstream server:port; the server may be a machine slug from
@@ -412,9 +489,11 @@ const sitesTutorial = `#########################################################
 #   w   also serve www.<domain>      (default ON  — use -w to disable)
 #   l   local-only (include local.conf, deny external)  (default OFF)
 #
-# Cert name defaults to the site's full domain (e.g. api.example.tld) unless
-# overridden with --cert="name". Certs are issued for <domain> (+ www if w on)
-# via 'revpro issue' and written to $CERTS_SUB/<cert>/.
+# Cert name defaults to the site's full domain (e.g. api.example.tld), unless
+# the group header sets a default with --cert="name" (handy when one cert
+# covers most of a domain's subdomains), and a line's own --cert="name"
+# overrides either default. Certs are issued for <domain> (+ www if w on) via
+# 'revpro issue' and written to $CERTS_SUB/<cert>/.
 #
 # Lines starting with '#' are comments. Edit, then run 'revpro regenerate'.
 ##############################################################################

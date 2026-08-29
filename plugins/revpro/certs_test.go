@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -300,6 +301,58 @@ auth.example.tld     a:s:192.168.0.12:9000 auth.example.tld
 	}
 	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
 		t.Errorf("expected legacy file to be renamed away")
+	}
+}
+
+func TestConvertLegacyHoistsGroupCert(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "site-configs.conf")
+	// Four sites under lnln.eu: three share the domain-wide "lnln.eu" cert,
+	// one (custom.lnln.eu) has its own dedicated cert.
+	os.WriteFile(legacy, []byte(`ai.lnln.eu        192.168.2.20:3210    lnln.eu
+picshr.lnln.eu    192.168.2.20:8431    lnln.eu
+share.lnln.eu     192.168.2.20:9221    lnln.eu
+custom.lnln.eu    192.168.2.20:9999    custom-cert
+`), 0o644)
+	c := &proxyConfig{
+		configFile:       filepath.Join(dir, "sites.conf"),
+		legacyConfigFile: legacy,
+	}
+	c.convertCmd()
+
+	out, err := os.ReadFile(c.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+
+	if !strings.Contains(text, `==lnln.eu <-w> --cert="lnln.eu"`) {
+		t.Errorf("expected group header to hoist the shared cert, got:\n%s", text)
+	}
+	if strings.Contains(text, `ai           `+"192.168.2.20:3210"+`          --cert`) {
+		t.Errorf("line matching the hoisted group cert should not repeat --cert=:\n%s", text)
+	}
+	if !strings.Contains(text, `--cert="custom-cert"`) {
+		t.Errorf("expected the outlier line to keep its own --cert=, got:\n%s", text)
+	}
+
+	// And it should round-trip: parsing the converted file resolves every
+	// site's cert correctly, whether inherited from the group or its own.
+	sites, err := c.parseSites()
+	if err != nil {
+		t.Fatalf("converted file does not parse: %v\n%s", err, text)
+	}
+	by := map[string]site{}
+	for _, s := range sites {
+		by[s.fqdn] = s
+	}
+	for _, fqdn := range []string{"ai.lnln.eu", "picshr.lnln.eu", "share.lnln.eu"} {
+		if got := by[fqdn].certName; got != "lnln.eu" {
+			t.Errorf("%s: expected inherited cert \"lnln.eu\", got %q", fqdn, got)
+		}
+	}
+	if got := by["custom.lnln.eu"].certName; got != "custom-cert" {
+		t.Errorf("custom.lnln.eu: expected own cert \"custom-cert\", got %q", got)
 	}
 }
 
