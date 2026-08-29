@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -396,6 +398,112 @@ func stubCmnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+}
+
+func TestGroupEndpoints(t *testing.T) {
+	ws, srv := newTestServer(t)
+	ck := login(t, srv)
+	csrf := csrfFor(t, srv, ck)
+
+	// State must list the fixture's one group (example.tld, 2 sites).
+	res := authedGet(t, srv, ck, "/api/state")
+	var state struct {
+		GroupBlocks []struct {
+			Index     int    `json:"index"`
+			Domain    string `json:"domain"`
+			SiteCount int    `json:"siteCount"`
+		} `json:"groupBlocks"`
+	}
+	json.NewDecoder(res.Body).Decode(&state)
+	res.Body.Close()
+	if len(state.GroupBlocks) != 1 || state.GroupBlocks[0].Domain != "example.tld" || state.GroupBlocks[0].SiteCount != 2 {
+		t.Fatalf("unexpected groupBlocks: %+v", state.GroupBlocks)
+	}
+
+	// Bad domain rejected.
+	res = postJSON(t, srv, ck, csrf, "/api/groups/save", `{"index":0,"domain":"not a domain","flags":{}}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad domain: got %d, want 400", res.StatusCode)
+	}
+
+	// Editing the existing group must not disturb its site lines.
+	res = postJSON(t, srv, ck, csrf, "/api/groups/save",
+		`{"index":0,"domain":"example.tld","label":"edited label","flags":{"l":true}}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("group save: got %d", res.StatusCode)
+	}
+	data, _ := os.ReadFile(ws.c.configFile)
+	text := string(data)
+	if !strings.Contains(text, "app      10.0.0.2:8080") {
+		t.Errorf("site line lost after group edit:\n%s", text)
+	}
+	if !strings.Contains(text, "edited label") {
+		t.Errorf("expected new label in file:\n%s", text)
+	}
+
+	// Adding a new empty group.
+	res = postJSON(t, srv, ck, csrf, "/api/groups/add", `{"domain":"new.tld","flags":{}}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("group add: got %d", res.StatusCode)
+	}
+
+	// Deleting the (still non-empty) original group must be refused.
+	res = postJSON(t, srv, ck, csrf, "/api/groups/delete", `{"index":0}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("delete non-empty group: got %d, want 422", res.StatusCode)
+	}
+
+	// Deleting the newly-added empty group must succeed.
+	res = authedGet(t, srv, ck, "/api/state")
+	json.NewDecoder(res.Body).Decode(&state)
+	res.Body.Close()
+	var newIdx = -1
+	for _, g := range state.GroupBlocks {
+		if g.Domain == "new.tld" {
+			newIdx = g.Index
+		}
+	}
+	if newIdx < 0 {
+		t.Fatal("new.tld group not found")
+	}
+	res = postJSON(t, srv, ck, csrf, "/api/groups/delete", fmt.Sprintf(`{"index":%d}`, newIdx))
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("delete empty group: got %d", res.StatusCode)
+	}
+}
+
+func TestWedosSaveEndpoint(t *testing.T) {
+	stubCmnds(t)
+	_, srv := newTestServer(t)
+	ck := login(t, srv)
+	csrf := csrfFor(t, srv, ck)
+
+	res := postJSON(t, srv, ck, csrf, "/api/wedos", `{"user":"bob@example.com","password":"swordfish"}`)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("wedos save: got %d", res.StatusCode)
+	}
+	var out struct {
+		OK         bool `json:"ok"`
+		WedosReady bool `json:"wedosReady"`
+	}
+	json.NewDecoder(res.Body).Decode(&out)
+	if !out.WedosReady {
+		t.Error("expected wedosReady=true after setting both user and password")
+	}
+
+	// The password must never come back in /api/state.
+	res2 := authedGet(t, srv, ck, "/api/state")
+	defer res2.Body.Close()
+	raw, _ := io.ReadAll(res2.Body)
+	if strings.Contains(string(raw), "swordfish") {
+		t.Error("password leaked into /api/state")
+	}
 }
 
 func TestBrandEndpoints(t *testing.T) {

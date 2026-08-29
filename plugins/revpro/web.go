@@ -113,6 +113,10 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("POST /api/run", ws.auth.requireSession(ws.handleRun))
 	mux.HandleFunc("POST /api/sites/add", ws.auth.requireSession(ws.handleAddSite))
 	mux.HandleFunc("POST /api/sites/meta", ws.auth.requireSession(ws.handleSiteMeta))
+	mux.HandleFunc("POST /api/groups/save", ws.auth.requireSession(ws.handleGroupSave))
+	mux.HandleFunc("POST /api/groups/add", ws.auth.requireSession(ws.handleGroupAdd))
+	mux.HandleFunc("POST /api/groups/delete", ws.auth.requireSession(ws.handleGroupDelete))
+	mux.HandleFunc("POST /api/wedos", ws.auth.requireSession(ws.handleWedosSave))
 	mux.HandleFunc("GET /api/ports/suggest", ws.auth.requireSession(ws.handlePortSuggest))
 	mux.HandleFunc("GET /api/ports/check", ws.auth.requireSession(ws.handlePortCheck))
 	mux.HandleFunc("POST /api/brand", ws.auth.requireSession(ws.handleBrandSave))
@@ -259,7 +263,11 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 		"http3":         ws.c.http3,
 		"brand":         ws.c.currentBrand(),
 		"wedosReady":    configRead("REVPRO_WEDOS_USER") != "" && configRead("REVPRO_WEDOS_PASSWORD") != "",
+		"wedosUser":     configRead("REVPRO_WEDOS_USER"),
 		"wildcardCerts": ws.c.loadWildcardCerts(),
+	}
+	if groups, err := ws.c.listGroups(); err == nil {
+		state["groupBlocks"] = groups
 	}
 	if st, ok := ws.c.loadRenewStatus(); ok {
 		state["renewStatus"] = st
@@ -685,6 +693,119 @@ func (ws *webServer) handleSiteMeta(w http.ResponseWriter, r *http.Request, _ *w
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- whole-group management ----------
+
+// groupSaveRequest is shared by the add and save (edit) handlers.
+type groupSaveRequest struct {
+	Index   int    `json:"index"` // ignored by add
+	Domain  string `json:"domain"`
+	Machine string `json:"machine"`
+	Cert    string `json:"cert"`
+	Label   string `json:"label"`
+	Flags   struct {
+		A, S, W, L bool
+	} `json:"flags"`
+}
+
+func (req groupSaveRequest) validate() (flags siteFlags, err error) {
+	if !domainRe.MatchString(req.Domain) {
+		return flags, fmt.Errorf("bad domain")
+	}
+	if req.Machine != "" && strings.ContainsAny(req.Machine, ": \n") {
+		return flags, fmt.Errorf("bad machine (a host or a machines.conf slug, no port)")
+	}
+	if req.Cert != "" && !nameRe.MatchString(req.Cert) {
+		return flags, fmt.Errorf("bad cert name")
+	}
+	if strings.Contains(req.Label, "\n") {
+		return flags, fmt.Errorf("label must be a single line")
+	}
+	return siteFlags{auth: req.Flags.A, https: req.Flags.S, www: req.Flags.W, local: req.Flags.L}, nil
+}
+
+func (ws *webServer) handleGroupSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req groupSaveRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	flags, err := req.validate()
+	if err != nil {
+		httpErrJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ws.c.saveGroup(req.Index, req.Domain, req.Machine, req.Cert, req.Label, flags); err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (ws *webServer) handleGroupAdd(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req groupSaveRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	flags, err := req.validate()
+	if err != nil {
+		httpErrJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ws.c.addGroup(req.Domain, req.Machine, req.Cert, req.Label, flags); err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (ws *webServer) handleGroupDelete(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Index int `json:"index"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if err := ws.c.deleteGroup(req.Index); err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- DNS-01 (WEDOS) provider settings ----------
+
+// handleWedosSave persists REVPRO_WEDOS_USER/PASSWORD via 'cmnds config'. The
+// password is write-only end to end: it's never read back into /api/state
+// (which only ever exposes a wedosReady boolean), and a blank password field
+// here means "leave the stored one alone" — only a non-empty value overwrites
+// it, so the form doesn't need to round-trip the secret to be re-submitted.
+func (ws *webServer) handleWedosSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if err := configWrite("REVPRO_WEDOS_USER", strings.TrimSpace(req.User)); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.Password != "" {
+		if err := configWrite("REVPRO_WEDOS_PASSWORD", req.Password); err != nil {
+			httpErrJSON(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	writeJSON(w, map[string]any{
+		"ok":         true,
+		"wedosReady": configRead("REVPRO_WEDOS_USER") != "" && configRead("REVPRO_WEDOS_PASSWORD") != "",
+	})
 }
 
 // ---------- branding ----------

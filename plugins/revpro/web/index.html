@@ -351,6 +351,7 @@ pre.code .k{color:#8fc7a5}
         <div class="navlist">
           <button class="navlink is-active" data-view="sites">Sites</button>
           <button class="navlink" data-view="add">Add site</button>
+          <button class="navlink" data-view="groups">Groups</button>
         </div>
       </div>
       <div class="navgroup">
@@ -497,6 +498,63 @@ pre.code .k{color:#8fc7a5}
         <code>Issue certs</code> on the Sites view.</p>
     </section>
 
+    <!-- ============================ GROUPS ============================ -->
+    <section class="view" id="view-groups">
+      <div class="pagehead">
+        <p class="pagehead__kicker">reverse proxy</p>
+        <h1 class="pagehead__title">Groups</h1>
+        <p class="pagehead__lede">Each <code>==domain</code> header in <span class="filepath">sites.conf</span>,
+          with its default flags, machine, cert, and the zone label shown above it. The same domain
+          can appear as more than one group — one per distinct flag combination (e.g. public vs.
+          local-only vs. behind auth).</p>
+      </div>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Existing groups</h3></header>
+        <div class="panel__body panel__body--flush tablewrap">
+          <table id="groupstable">
+            <thead><tr>
+              <th>Domain</th><th>Label</th><th>Machine</th><th>Cert</th><th>Flags</th><th>Sites</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <form class="panel" id="groupaddform">
+        <header class="panel__head"><h3 class="panel__title">Add a new group</h3></header>
+        <div class="panel__body">
+          <div class="formgrid">
+            <div class="field">
+              <label for="ga-domain">Domain</label>
+              <input type="text" id="ga-domain" placeholder="example.tld" required>
+            </div>
+            <div class="field">
+              <label for="ga-machine">Machine <span class="dim">(host or slug, optional)</span></label>
+              <input type="text" id="ga-machine" list="groupslist2">
+              <datalist id="groupslist2"></datalist>
+            </div>
+            <div class="field">
+              <label for="ga-cert">Default cert <span class="dim">(optional)</span></label>
+              <input type="text" id="ga-cert">
+            </div>
+            <div class="full field">
+              <label for="ga-label">Zone label <span class="dim">(the comment shown above the header)</span></label>
+              <input type="text" id="ga-label" placeholder="e.g. example.tld — public sites, no auth">
+            </div>
+            <div class="full checks">
+              <label><input type="checkbox" class="gaflag" value="a"> auth</label>
+              <label><input type="checkbox" class="gaflag" value="s"> https upstream</label>
+              <label><input type="checkbox" class="gaflag" value="w" checked> www</label>
+              <label><input type="checkbox" class="gaflag" value="l"> local-only</label>
+            </div>
+            <div class="full"><button type="submit" class="btn btn--primary">Add group</button></div>
+          </div>
+          <span class="savemsg" id="groupadd-msg"></span>
+        </div>
+      </form>
+    </section>
+
     <!-- ============================ PORTS ============================ -->
     <section class="view" id="view-ports">
       <div class="pagehead">
@@ -629,13 +687,33 @@ pre.code .k{color:#8fc7a5}
         </div>
       </section>
 
+      <form class="panel" id="wedosform">
+        <header class="panel__head"><h3 class="panel__title">DNS-01 provider — WEDOS</h3></header>
+        <div class="panel__body">
+          <p class="hint" style="margin-top:0">ACME can only validate a wildcard via DNS-01 —
+            never HTTP-01. This is the only DNS-01 provider revpro currently supports.</p>
+          <div class="formgrid">
+            <div class="field">
+              <label for="wedos-user">WAPI username</label>
+              <input type="text" id="wedos-user" placeholder="you@example.com" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="wedos-password">WAPI password <span class="dim" id="wedos-pw-hint"></span></label>
+              <input type="password" id="wedos-password" placeholder="leave blank to keep the current one" autocomplete="new-password">
+            </div>
+            <div class="full"><button type="submit" class="btn btn--primary">Save</button></div>
+          </div>
+          <p class="hint">The password comes from the WEDOS client admin panel, not your regular
+            login. It's write-only here — once saved it's never sent back to the browser.</p>
+          <span class="savemsg" id="wedos-msg"></span>
+        </div>
+      </form>
+
       <form class="panel" id="wildcardform" data-tour="wildcard">
         <header class="panel__head"><h3 class="panel__title">Wildcard certificate (DNS-01)</h3></header>
         <div class="panel__body">
           <p id="wildcard-unready" class="hint" style="display:none;color:var(--bad)">
-            Needs REVPRO_WEDOS_USER and REVPRO_WEDOS_PASSWORD configured (ACME can only validate
-            a wildcard via DNS-01 — never HTTP-01). Set them with <code>cmnds config write</code>
-            on the host.
+            Set your WEDOS WAPI credentials above first.
           </p>
           <div class="formgrid">
             <div class="field">
@@ -960,6 +1038,41 @@ docker compose up -d reverseproxy   <span class="c"># 3. certs exist → nginx s
   </div>
 </div>
 
+<div class="modal" id="groupmodal" role="dialog" aria-modal="true">
+  <div class="modal__overlay" id="groupmodal-overlay"></div>
+  <div class="modal__box">
+    <h2 class="modal__title">Edit group</h2>
+    <p class="modal__sub mono" id="groupmodal-sub"></p>
+    <div class="field" style="margin-bottom:.9rem">
+      <label for="gm-domain">Domain</label>
+      <input type="text" id="gm-domain" required>
+    </div>
+    <div class="field" style="margin-bottom:.9rem">
+      <label for="gm-machine">Machine <span class="dim">(host or slug, optional)</span></label>
+      <input type="text" id="gm-machine">
+    </div>
+    <div class="field" style="margin-bottom:.9rem">
+      <label for="gm-cert">Default cert <span class="dim">(optional)</span></label>
+      <input type="text" id="gm-cert">
+    </div>
+    <div class="field" style="margin-bottom:.9rem">
+      <label for="gm-label">Zone label</label>
+      <input type="text" id="gm-label">
+    </div>
+    <div class="checks" style="margin-bottom:.5rem">
+      <label><input type="checkbox" class="gmflag" value="a"> auth</label>
+      <label><input type="checkbox" class="gmflag" value="s"> https upstream</label>
+      <label><input type="checkbox" class="gmflag" value="w"> www</label>
+      <label><input type="checkbox" class="gmflag" value="l"> local-only</label>
+    </div>
+    <div class="modal__actions">
+      <button class="btn" id="group-cancel">Cancel</button>
+      <button class="btn btn--primary" id="group-save">Save</button>
+    </div>
+    <span class="savemsg" id="group-msg"></span>
+  </div>
+</div>
+
 <script>
 "use strict";
 let S = {csrf:"", user:"", sites:[], categories:[], machines:{}, groups:[], slugs:[], setup:{}};
@@ -1242,6 +1355,157 @@ $("#sitemeta-save").addEventListener("click", async () => {
   }
 });
 
+/* ---------- groups ---------- */
+function renderGroups(){
+  const tb = $("#groupstable tbody");
+  tb.innerHTML = "";
+  const groups = S.groupBlocks || [];
+  const gl2 = $("#groupslist2"); if (gl2) gl2.innerHTML = "";
+  const seenDomains = new Set();
+
+  groups.forEach(g => {
+    if (gl2 && !seenDomains.has(g.domain)){
+      seenDomains.add(g.domain);
+      const o = document.createElement("option"); o.value = g.domain; gl2.appendChild(o);
+    }
+    const tr = document.createElement("tr");
+
+    const td1 = document.createElement("td"); td1.className = "mono"; td1.textContent = g.domain;
+    tr.appendChild(td1);
+
+    const td2 = document.createElement("td"); td2.textContent = g.label || "";
+    tr.appendChild(td2);
+
+    const td3 = document.createElement("td"); td3.className = "mono"; td3.textContent = g.machine || "";
+    tr.appendChild(td3);
+
+    const td4 = document.createElement("td"); td4.className = "mono"; td4.textContent = g.cert || "";
+    tr.appendChild(td4);
+
+    const td5 = document.createElement("td");
+    if (g.auth)  td5.appendChild(chip("auth","accent"));
+    if (g.https) td5.appendChild(chip("https","ok"));
+    if (g.www)   td5.appendChild(chip("www",""));
+    if (g.local) td5.appendChild(chip("local","warn"));
+    tr.appendChild(td5);
+
+    const td6 = document.createElement("td"); td6.textContent = g.siteCount;
+    tr.appendChild(td6);
+
+    const td7 = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn btn--mini"; editBtn.textContent = "edit";
+    editBtn.onclick = () => openGroupModal(g);
+    td7.appendChild(editBtn);
+    td7.appendChild(document.createTextNode(" "));
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn btn--mini";
+    delBtn.textContent = "delete";
+    if (g.siteCount > 0){
+      delBtn.disabled = true;
+      delBtn.title = "Move or remove its " + g.siteCount + " site(s) first";
+    } else {
+      delBtn.onclick = () => deleteGroupRow(g.index, g.domain);
+    }
+    td7.appendChild(delBtn);
+    tr.appendChild(td7);
+
+    tb.appendChild(tr);
+  });
+
+  if (!groups.length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 7; td.className = "empty";
+    td.textContent = "No groups found in sites.conf.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
+let editingGroupIndex = null;
+
+function openGroupModal(g){
+  editingGroupIndex = g.index;
+  $("#groupmodal-sub").textContent = "Group #" + g.index + " (" + g.siteCount + " site(s))";
+  $("#gm-domain").value = g.domain;
+  $("#gm-machine").value = g.machine || "";
+  $("#gm-cert").value = g.cert || "";
+  $("#gm-label").value = g.label || "";
+  $$(".gmflag").forEach(cb => {
+    cb.checked = {a: g.auth, s: g.https, w: g.www, l: g.local}[cb.value];
+  });
+  $("#group-msg").textContent = ""; $("#group-msg").className = "savemsg";
+  $("#groupmodal").classList.add("is-on");
+}
+function closeGroupModal(){
+  $("#groupmodal").classList.remove("is-on");
+  editingGroupIndex = null;
+}
+$("#groupmodal-overlay").addEventListener("click", closeGroupModal);
+$("#group-cancel").addEventListener("click", closeGroupModal);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("#groupmodal").classList.contains("is-on")) closeGroupModal();
+});
+
+function groupFlagsFrom(selector){
+  const on = new Set($$(selector).filter(c => c.checked).map(c => c.value));
+  return {A: on.has("a"), S: on.has("s"), W: on.has("w"), L: on.has("l")};
+}
+
+$("#group-save").addEventListener("click", async () => {
+  if (editingGroupIndex === null) return;
+  const msg = $("#group-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  try {
+    await apiJSON("/api/groups/save", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        index: editingGroupIndex,
+        domain: $("#gm-domain").value.trim(),
+        machine: $("#gm-machine").value.trim(),
+        cert: $("#gm-cert").value.trim(),
+        label: $("#gm-label").value.trim(),
+        flags: groupFlagsFrom(".gmflag"),
+      })});
+    await loadState();
+    closeGroupModal();
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+async function deleteGroupRow(index, domain){
+  if (!confirm("Delete the group for " + domain + "? This only removes the header (it's already empty).")) return;
+  try {
+    await apiJSON("/api/groups/delete", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({index})});
+    await loadState();
+  } catch(e){
+    alert(e.message);
+  }
+}
+
+$("#groupaddform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#groupadd-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  try {
+    await apiJSON("/api/groups/add", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        domain: $("#ga-domain").value.trim(),
+        machine: $("#ga-machine").value.trim(),
+        cert: $("#ga-cert").value.trim(),
+        label: $("#ga-label").value.trim(),
+        flags: groupFlagsFrom(".gaflag"),
+      })});
+    await loadState();
+    e.target.reset();
+    $("#ga-domain").focus();
+    msg.textContent = "Added"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
 /* ---------- branding ---------- */
 function hexToRgb(hex){
   let h = hex.replace("#", "");
@@ -1463,6 +1727,7 @@ async function loadState(){
     $("#hdrpath").textContent = S.revproDir;
     applyBrand();
     renderSites();
+    renderGroups();
     renderPorts();
     renderSetup();
     renderCertTools();
@@ -1583,6 +1848,22 @@ $("#httpform").addEventListener("submit", e => {
 });
 
 /* ---------- wildcard certs (DNS-01) + renewal status ---------- */
+$("#wedosform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#wedos-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  try {
+    const r = await apiJSON("/api/wedos", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({user: $("#wedos-user").value.trim(), password: $("#wedos-password").value})});
+    S.wedosReady = r.wedosReady;
+    S.wedosUser = $("#wedos-user").value.trim();
+    $("#wedos-password").value = "";
+    renderCertTools();
+    msg.textContent = "Saved"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
 $("#wildcardform").addEventListener("submit", e => {
   e.preventDefault();
   const domain = $("#wc-domain").value.trim();
@@ -1610,6 +1891,8 @@ function renderCertTools(){
   const ready = !!S.wedosReady;
   $("#wildcard-unready").style.display = ready ? "none" : "";
   $("#wc-submit").disabled = !ready;
+  $("#wedos-user").value = S.wedosUser || "";
+  $("#wedos-pw-hint").textContent = ready ? "(currently set)" : "(not set)";
 
   const rs = $("#renew-status");
   if (S.renewStatus){
