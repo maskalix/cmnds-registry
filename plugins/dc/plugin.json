@@ -1,0 +1,27 @@
+{
+  "name": "dc",
+  "version": "2.0.0",
+  "description": "Quick docker compose shortcuts",
+  "author": "Martin Skalicky",
+  "type": "binary",
+  "entry_point": "dc",
+  "category": "docker",
+  "dependencies": {
+    "apt": ["docker.io"],
+    "plugins": []
+  },
+  "help": {
+    "usage": "dc <command> [args...]",
+    "description": "Shortcuts for docker compose: up/down/build/logs/restart, plus editing/recreating the compose file and a pull+down+up recompose.",
+    "options": [
+      { "flag": "-h, --help", "description": "Show this help" }
+    ],
+    "examples": [
+      { "command": "dc ud", "description": "Start containers in detached mode" },
+      { "command": "dc udb", "description": "Build and start containers in detached mode" },
+      { "command": "dc l -f web", "description": "Follow logs for 'web' service" },
+      { "command": "dc sh web", "description": "Open a shell in the 'web' container" },
+      { "command": "dc r", "description": "Recompose: pull → down → up -d" }
+    ]
+  }
+}

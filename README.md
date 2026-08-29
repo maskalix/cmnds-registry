@@ -46,6 +46,7 @@ cmnds-registry/
 | Plugin | Type | Status |
 |---|---|---|
 | cpc | binary (Go) | ✅ |
+| dc | binary (Go) | ✅ |
 | perf | binary (Go) | ✅ |
 | rcmount | binary (Go) | ✅ |
 | rec | binary (Go) | ✅ |

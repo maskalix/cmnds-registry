@@ -8,6 +8,13 @@
       "version": "2.0.0"
     },
     {
+      "category": "docker",
+      "description": "Quick docker compose shortcuts",
+      "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/dc-v2.0.0/dc-2.0.0.tar.gz",
+      "name": "dc",
+      "version": "2.0.0"
+    },
+    {
       "category": "system",
       "description": "System performance snapshot (CPU, memory, load, disk)",
       "download_url": "https://github.com/maskalix/cmnds-registry/releases/download/perf-v2.0.0/perf-2.0.0.tar.gz",
