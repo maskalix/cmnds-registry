@@ -89,6 +89,8 @@ func main() {
 		mustConfig().machinesCmd(os.Args[2:])
 	case "web":
 		mustConfig().webCmd(os.Args[2:])
+	case "redirect":
+		mustConfig().redirectCmd(os.Args[2:])
 	case "cert":
 		certInspect(os.Args[2:])
 	case "certgen":
@@ -255,27 +257,35 @@ server {
     include /etc/nginx/includes/letsencrypt.conf;
     include /etc/nginx/includes/general.conf;
     include /etc/nginx/includes/security.conf;
-
-    # Variables
-    set $forward_scheme %s;
-    set $server %s;
-    set $port %s;
-    set $upstream $forward_scheme://$server:$port;
 `,
 		s.serverName(),
 		c.logDir, domain, c.logDir, domain,
 		c.certsSub, cert, cert,
 		c.certsSub, cert, cert,
-		c.certsSub, cert, cert,
-		forwardScheme, server, port))
+		c.certsSub, cert, cert))
+
+	// http3.conf's add_header lines belong at server level, alongside
+	// security.conf's: nginx only inherits a parent context's add_header
+	// directives when the child defines none of its own, so leaving them
+	// inside location / (as a prior version of this template did) would
+	// silently discard every header security.conf sets as soon as HTTP3 is
+	// on, since location / would then have "its own" add_header directives.
+	if c.http3 {
+		b.WriteString("    include /etc/nginx/includes/http3.conf;\n")
+	}
+
+	b.WriteString(fmt.Sprintf(`
+    # Variables
+    set $forward_scheme %s;
+    set $server %s;
+    set $port %s;
+    set $upstream $forward_scheme://$server:$port;
+`, forwardScheme, server, port))
 
 	if s.flags.auth {
 		b.WriteString(fmt.Sprintf("        \n    # Authentik proxy\n    include %s;\n}\n", c.authProxyConf))
 	} else {
 		b.WriteString("        \n    location / {\n")
-		if c.http3 {
-			b.WriteString("        # HTTP/3 Support\n        include /etc/nginx/includes/http3.conf;\n")
-		}
 		b.WriteString("        \n        # Proxy\n        proxy_pass $upstream;\n        include /etc/nginx/includes/proxy.conf;\n")
 		if s.flags.local {
 			b.WriteString("            \n        # Local access only\n        include /etc/nginx/includes/local.conf;\n")
@@ -1011,7 +1021,23 @@ Certificates (ACME / Let's Encrypt via lego, HTTP-01):
   renew [--daemon]    Renew certs within the renew window, then regenerate+reload.
                       --daemon loops, checking once a day.
 
+Port 80:
+  redirect [--listen host:port]
+                      Small persistent server (default :80): serves ACME
+                      HTTP-01 challenges from REVPRO_ACME_WEBROOT and
+                      redirects everything else to https://. Run this
+                      continuously (e.g. a systemd service) if nginx itself
+                      doesn't hold :80 — otherwise nothing answers plain
+                      http:// at all, and issue/renew have nowhere free to
+                      bind for the standalone method either.
+
 Bootstrapping a brand-new domain (no cert yet):
+  Recommended — run 'revpro redirect' persistently and point
+  REVPRO_ACME_WEBROOT at the same directory it serves from: issue/renew then
+  write challenges there instead of binding :80 themselves, so nothing ever
+  needs to be stopped, first issuance included.
+
+  Fallback (no redirect service, nginx holds :80 itself):
   1) docker compose stop reverseproxy     # free :80
   2) revpro issue                         # revpro answers HTTP-01 on :80
   3) docker compose up -d reverseproxy    # certs exist → nginx starts
@@ -1059,9 +1085,10 @@ Config variables (via 'cmnds config'):
   CERTS, CERTS_SUB    self-signed CA dir / per-cert output base
   HTTP3               "true" to emit HTTP/3 listeners
   REVPRO_ACME_EMAIL   ACME account email (required for issue/renew)
-  REVPRO_ACME_WEBROOT HTTP-01 webroot served by the RUNNING nginx (best for
-                      renewals once up; e.g. /revpro/letsencrypt). If unset,
-                      revpro binds the port below directly.
+  REVPRO_ACME_WEBROOT HTTP-01 webroot — served by 'revpro redirect' if that's
+                      running, otherwise by nginx itself (e.g.
+                      /revpro/letsencrypt). If unset, revpro binds the port
+                      below directly instead (needs :80 free at issue time).
   REVPRO_ACME_PORT    standalone HTTP-01 port (default 80 — the port LE uses;
                       lets first issuance work with nginx down)
   REVPRO_ACME_STAGING "true" → Let's Encrypt staging CA

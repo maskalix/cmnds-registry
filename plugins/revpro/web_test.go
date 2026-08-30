@@ -400,6 +400,27 @@ func stubCmnds(t *testing.T) {
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 }
 
+func TestSecurityCheckEndpoint(t *testing.T) {
+	_, srv := newTestServer(t)
+	ck := login(t, srv)
+
+	res := authedGet(t, srv, ck, "/api/security-check?url=http://example.com")
+	defer res.Body.Close()
+	var out struct {
+		Error string `json:"error"`
+	}
+	json.NewDecoder(res.Body).Decode(&out)
+	if out.Error == "" {
+		t.Error("expected an error for a non-https URL")
+	}
+
+	res2 := authedGet(t, srv, ck, "/api/security-check")
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusBadRequest {
+		t.Errorf("missing url param: got %d, want 400", res2.StatusCode)
+	}
+}
+
 func TestGroupEndpoints(t *testing.T) {
 	ws, srv := newTestServer(t)
 	ck := login(t, srv)

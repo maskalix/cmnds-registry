@@ -657,6 +657,31 @@ pre.code .k{color:#8fc7a5}
         </div>
       </form>
 
+      <form class="panel" id="secform">
+        <header class="panel__head"><h3 class="panel__title">Security headers &amp; TLS check</h3></header>
+        <div class="panel__body">
+          <p class="hint" style="margin-top:0">Checks the same items a Seon-style audit flags: cert chain
+            trust &amp; completeness, HSTS, CSP, X-Content-Type-Options, OCSP stapling, clickjacking
+            protection, Referrer-Policy, and Permissions-Policy — against one live URL, no site config
+            required.</p>
+          <div class="formgrid">
+            <div class="field full">
+              <label for="sec-url">URL</label>
+              <input type="text" id="sec-url" placeholder="https://example.com" required>
+            </div>
+            <div class="full"><button type="submit" class="btn btn--primary" id="sec-submit">Check</button></div>
+          </div>
+          <div id="sec-error" class="error-box" style="display:none;margin-top:1rem"></div>
+          <div id="sec-note" class="hint" style="display:none;color:var(--warn);margin-top:1rem"></div>
+          <div class="tablewrap" style="margin-top:1rem">
+            <table id="sectable" style="display:none">
+              <thead><tr><th></th><th>Check</th><th>Severity</th><th>Value / detail</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </form>
+
       <form class="panel" id="httpform">
         <header class="panel__head"><h3 class="panel__title">HTTP/2 &amp; HTTP/3 support</h3></header>
         <div class="panel__body">
@@ -1845,6 +1870,61 @@ $("#httpform").addEventListener("submit", e => {
   e.preventDefault();
   stream("/api/run", {action:"http", httpVer: $("#http-ver").value, url: $("#http-url").value.trim()},
          "http/" + $("#http-ver").value + " check");
+});
+
+/* ---------- security headers & TLS check ---------- */
+const severityChipClass = {critical: "bad", warning: "warn", info: "accent"};
+
+$("#secform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const errBox = $("#sec-error"), noteBox = $("#sec-note"), table = $("#sectable");
+  errBox.style.display = "none";
+  noteBox.style.display = "none";
+  table.style.display = "none";
+  $("#sec-submit").disabled = true;
+  try {
+    const res = await apiJSON("/api/security-check?url=" + encodeURIComponent($("#sec-url").value.trim()));
+    if (res.error) {
+      errBox.textContent = res.error;
+      errBox.style.display = "";
+      return;
+    }
+    if (res.note) {
+      noteBox.textContent = res.note;
+      noteBox.style.display = "";
+    }
+    const tb = $("#sectable tbody");
+    tb.innerHTML = "";
+    (res.checks || []).forEach(c => {
+      const tr = document.createElement("tr");
+
+      const td1 = document.createElement("td");
+      td1.appendChild(chip(c.pass ? "pass" : "fail", c.pass ? "ok" : "bad"));
+      tr.appendChild(td1);
+
+      const td2 = document.createElement("td");
+      td2.textContent = c.name;
+      tr.appendChild(td2);
+
+      const td3 = document.createElement("td");
+      td3.appendChild(chip(c.severity, severityChipClass[c.severity] || ""));
+      tr.appendChild(td3);
+
+      const td4 = document.createElement("td");
+      td4.className = "mono";
+      td4.style.wordBreak = "break-word";
+      td4.textContent = c.detail || c.value || "—";
+      tr.appendChild(td4);
+
+      tb.appendChild(tr);
+    });
+    table.style.display = "";
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.style.display = "";
+  } finally {
+    $("#sec-submit").disabled = false;
+  }
 });
 
 /* ---------- wildcard certs (DNS-01) + renewal status ---------- */

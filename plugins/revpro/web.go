@@ -119,6 +119,7 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("POST /api/wedos", ws.auth.requireSession(ws.handleWedosSave))
 	mux.HandleFunc("GET /api/ports/suggest", ws.auth.requireSession(ws.handlePortSuggest))
 	mux.HandleFunc("GET /api/ports/check", ws.auth.requireSession(ws.handlePortCheck))
+	mux.HandleFunc("GET /api/security-check", ws.auth.requireSession(ws.handleSecurityCheck))
 	mux.HandleFunc("POST /api/brand", ws.auth.requireSession(ws.handleBrandSave))
 	mux.HandleFunc("POST /api/brand/logo", ws.auth.requireSession(ws.handleBrandLogoUpload))
 	mux.HandleFunc("POST /api/brand/logo/remove", ws.auth.requireSession(ws.handleBrandLogoRemove))
@@ -1095,6 +1096,19 @@ func (ws *webServer) handlePortCheck(w http.ResponseWriter, r *http.Request, _ *
 		res["listening"] = probeListening(machine, port)
 	}
 	writeJSON(w, res)
+}
+
+// handleSecurityCheck runs the security-headers/TLS checklist against a
+// caller-supplied https:// URL and returns the result as JSON. Read-only —
+// no revpro state is touched — so unlike the mutating actions this is served
+// in-process rather than through streamCommand.
+func (ws *webServer) handleSecurityCheck(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	target := r.URL.Query().Get("url")
+	if target == "" {
+		httpErrJSON(w, http.StatusBadRequest, "url required")
+		return
+	}
+	writeJSON(w, runSecurityCheck(target))
 }
 
 // ---------- small helpers ----------
