@@ -1,7 +1,7 @@
 {
   "name": "revpro",
-  "version": "2.16.1",
-  "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, HTTP/3 support, a web UI (local/OIDC auth), per-category port suggestion, and machine slugs",
+  "version": "2.17.0",
+  "description": "Nginx reverse proxy manager with grouped sites.conf, ACME (Let's Encrypt) issuance + auto-renewal, HTTP/3 support, a web UI (local/OIDC auth), per-category port suggestion, machine slugs, and fail2ban + AbuseIPDB-backed security dashboard",
   "author": "Martin Skalicky",
   "type": "binary",
   "entry_point": "revpro",
@@ -12,7 +12,7 @@
     "optional_plugins": []
   },
   "help": {
-    "usage": "revpro <generate|add|list|analyze|reload|restart|clean|regenerate|edit|init|issue|renew|port|web|cert|certgen|http> [args]",
+    "usage": "revpro <generate|add|list|analyze|reload|restart|clean|regenerate|edit|init|issue|renew|port|web|fail2ban|cert|certgen|http> [args]",
     "description": "Manages nginx reverse proxy site configurations. Generates per-site configs from a site-configs.conf template, issues and auto-renews Let's Encrypt certificates via ACME (HTTP-01, lego), supports HTTP/3 and Authentik auth-proxy. Bundles TLS helpers (cert inspection, self-signed cert generation), an HTTP/2,3 checker, per-category port range suggestion (ports.conf), and an embedded web UI with local (bcrypt) and/or OIDC login.",
     "options": [
       { "flag": "generate", "description": "Generate per-site nginx configs from site-configs.conf" },
@@ -30,6 +30,7 @@
       { "flag": "machines [list|init|set|rm]", "description": "Machine slugs (machines.conf): short codes like A = 192.168.2.20, usable in sites.conf targets, group headers (==apps.tld [A] + port-only lines), port tools and the web UI" },
       { "flag": "port init|list|suggest|check", "description": "Category port ranges (ports.conf): suggest the next free port on a machine, check a port, list usage" },
       { "flag": "web [--listen] [--no-auth]", "description": "Serve the embedded web UI (all controls); 'web passwd' sets the local login" },
+      { "flag": "fail2ban setup|status|ban|unban|guard", "description": "Install+configure fail2ban with sane defaults, show jail status, ban/unban an IP, or check recent visitor IPs against AbuseIPDB and block anything abusive" },
       { "flag": "cert -d <domain> [...]", "description": "Inspect/verify a live certificate" },
       { "flag": "certgen -d <domain> ...", "description": "Generate a self-signed root CA + server cert" },
       { "flag": "http <2|3> <url>", "description": "Check HTTP/2 or HTTP/3 support" }
@@ -40,7 +41,8 @@
       { "command": "revpro renew --daemon", "description": "Run a renewal loop that auto-renews and reloads nginx" },
       { "command": "revpro cert -d example.com -e -i", "description": "Show a live cert's expiry and issuer" },
       { "command": "revpro port suggest 10.0.0.2 web", "description": "Suggest the next free 'web'-range port on machine 10.0.0.2" },
-      { "command": "revpro web --listen 0.0.0.0:8675", "description": "Start the web UI (after 'revpro web passwd admin' or OIDC config)" }
+      { "command": "revpro web --listen 0.0.0.0:8675", "description": "Start the web UI (after 'revpro web passwd admin' or OIDC config)" },
+      { "command": "revpro fail2ban setup", "description": "Install fail2ban and write jail.local with sane defaults" }
     ]
   }
 }
