@@ -21,7 +21,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -64,6 +66,18 @@ func (c *proxyConfig) saveWebhooks(list []webhookConfig) error {
 	return os.WriteFile(c.webhooksFile(), data, 0o644)
 }
 
+// webhookBackoffUntil tracks, per webhook ID, when it's next OK to try
+// delivering again after a 429 — process-lifetime, in-memory. A single
+// 'revpro fail2ban guard' or bulk-add run can fire dozens of events in a
+// tight loop within one process, which is exactly when a chatty target
+// like Discord starts rate-limiting; without this, every remaining event
+// in that same run would repeat the identical failed call. Keyed by ID
+// (not URL) so renaming a webhook doesn't lose its backoff.
+var (
+	webhookBackoffUntil = map[string]time.Time{}
+	webhookBackoffMu    sync.Mutex
+)
+
 // fireWebhook records event to the audit log and delivers it to every
 // configured webhook subscribed to it. Every occasion revpro cares about
 // enough to have an event name for already flows through here, so this one
@@ -75,10 +89,34 @@ func fireWebhook(c *proxyConfig, event string, fields map[string]any) {
 		if !containsStr(wh.Events, event) {
 			continue
 		}
-		if err := deliverWebhook(wh, event, fields); err != nil {
+		if until, backingOff := webhookInBackoff(wh.ID); backingOff {
+			warn("webhook %q: skipping (rate-limited until %s)", wh.Name, until.Format(time.TimeOnly))
+			continue
+		}
+		retryAfter, err := deliverWebhook(wh, event, fields)
+		if err != nil {
 			warn("webhook %q: %v", wh.Name, err)
 		}
+		if retryAfter > 0 {
+			setWebhookBackoff(wh.ID, retryAfter)
+		}
 	}
+}
+
+func webhookInBackoff(id string) (time.Time, bool) {
+	webhookBackoffMu.Lock()
+	defer webhookBackoffMu.Unlock()
+	until, ok := webhookBackoffUntil[id]
+	if !ok || time.Now().After(until) {
+		return time.Time{}, false
+	}
+	return until, true
+}
+
+func setWebhookBackoff(id string, d time.Duration) {
+	webhookBackoffMu.Lock()
+	defer webhookBackoffMu.Unlock()
+	webhookBackoffUntil[id] = time.Now().Add(d)
 }
 
 // ---------- audit log ----------
@@ -151,9 +189,14 @@ func (c *proxyConfig) recentAudit(limit int) ([]auditEntry, error) {
 	return out, nil
 }
 
-func deliverWebhook(wh webhookConfig, event string, fields map[string]any) error {
+// deliverWebhook POSTs event to wh. The returned duration is only ever
+// non-zero on a 429 (rate limited) response — how long the caller should
+// back off this webhook before trying again — so a caller firing many
+// events in one loop (a guard scan blocking dozens of IPs) can stop
+// repeating a call it already knows will fail instead of hammering the
+// target with the exact same request over and over.
+func deliverWebhook(wh webhookConfig, event string, fields map[string]any) (retryAfter time.Duration, err error) {
 	var body []byte
-	var err error
 	switch wh.Type {
 	case "discord":
 		body, err = json.Marshal(discordEmbed(event, fields))
@@ -165,24 +208,48 @@ func deliverWebhook(wh webhookConfig, event string, fields map[string]any) error
 		body, err = json.Marshal(payload)
 	}
 	if err != nil {
-		return fmt.Errorf("encode: %w", err)
+		return 0, fmt.Errorf("encode: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", wh.URL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("delivery failed: %s", resp.Status)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return parseRetryAfter(resp.Header.Get("Retry-After")), fmt.Errorf("delivery failed: %s", resp.Status)
 	}
-	return nil
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("delivery failed: %s", resp.Status)
+	}
+	return 0, nil
+}
+
+// defaultRetryAfter is used when a 429 response carries no Retry-After
+// header at all (or an unparseable one) — a conservative guess.
+const defaultRetryAfter = 60 * time.Second
+
+// parseRetryAfter reads a Retry-After header value, which per RFC 9110 is
+// either a number of seconds or an HTTP-date.
+func parseRetryAfter(v string) time.Duration {
+	if v == "" {
+		return defaultRetryAfter
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return defaultRetryAfter
 }
 
 // discordEventMeta is the human title + accent color a Discord embed uses

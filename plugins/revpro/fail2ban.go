@@ -48,7 +48,12 @@ func f2bAvailable() bool {
 // manualJail is a dedicated, filter-less jail: nothing ever bans into it
 // automatically via a log filter — it exists purely so the web UI (and the
 // AbuseIPDB auto-block scan) has somewhere to put a one-off ban that blocks
-// every port, not just one service's.
+// every port, not just one service's. Its bantime is permanent (-1, see
+// f2bJailLocal), unlike every other jail here: these are deliberate,
+// already-considered blocks (a human clicking Ban, or an AbuseIPDB
+// confidence-score match), not an automatic filter match that could be a
+// false positive — so there's no reason for one to quietly expire on its
+// own the way an sshd or botsearch ban should.
 const manualJail = "revpro-manual"
 
 // f2bJail is one jail's live status, as reported by 'fail2ban-client status <name>'.
@@ -263,6 +268,7 @@ enabled = true
 filter =
 banaction = iptables-allports
 logpath =
+bantime = -1
 `, ignore, action, logDir, logDir, logDir, errorJail, manualJail)
 }
 

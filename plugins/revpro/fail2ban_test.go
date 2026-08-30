@@ -81,6 +81,19 @@ func TestF2BJailLocalIncludesIgnoreAndLogDir(t *testing.T) {
 	}
 }
 
+func TestF2BJailLocalManualJailBantimeIsPermanent(t *testing.T) {
+	out := f2bJailLocal("/revpro/logs", "", "")
+	i := strings.Index(out, "["+manualJail+"]")
+	if i < 0 {
+		t.Fatalf("manual jail section missing:\n%s", out)
+	}
+	// The manual jail's own bantime must override the DEFAULT's 1h — a
+	// deliberate/AbuseIPDB-driven block must never quietly self-expire.
+	if !strings.Contains(out[i:], "bantime = -1") {
+		t.Errorf("expected the manual jail to override bantime to permanent (-1):\n%s", out[i:])
+	}
+}
+
 func TestF2BJailLocalAlwaysIncludesGenericHTTPErrorsJail(t *testing.T) {
 	out := f2bJailLocal("/revpro/logs", "", "")
 	if !strings.Contains(out, "[nginx-http-errors]") {

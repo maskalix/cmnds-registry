@@ -1792,7 +1792,7 @@ func (ws *webServer) handleWebhookTest(w http.ResponseWriter, r *http.Request, _
 	}
 	for _, wh := range ws.c.loadWebhooks() {
 		if wh.ID == req.ID {
-			if err := deliverWebhook(wh, "test", map[string]any{"note": "test delivery from the revpro web UI"}); err != nil {
+			if _, err := deliverWebhook(wh, "test", map[string]any{"note": "test delivery from the revpro web UI"}); err != nil {
 				httpErrJSON(w, http.StatusBadGateway, err.Error())
 				return
 			}

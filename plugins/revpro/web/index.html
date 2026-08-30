@@ -748,11 +748,13 @@ pre.code .k{color:#8fc7a5}
         <div class="panel__body">
           <p class="hint" style="margin-top:0">fail2ban isn't installed on this box yet. Setup installs the
             package, writes <code>/etc/fail2ban/jail.local</code> with an <code>sshd</code> jail, nginx
-            botsearch/http-auth/http-errors jails watching this install's logs, a long-bantime
-            <code>recidive</code> jail for repeat offenders, and a ban-only <code>revpro-manual</code> jail for
-            one-off/guard-scan bans. The ignoreip list is auto-detected from this box's own private network
-            address(es), so it can't lock out its own management traffic — and every bantime is finite, so
-            even a wrong ignoreip self-heals instead of a permanent lockout.</p>
+            botsearch/http-auth/http-errors jails watching this install's logs, and a long-bantime
+            <code>recidive</code> jail for repeat offenders. The ignoreip list is auto-detected from this box's
+            own private network address(es), so it can't lock out its own management traffic — and every
+            filter-driven jail's bantime is finite, so even a wrong ignoreip self-heals instead of a permanent
+            lockout. The one exception is <code>revpro-manual</code> (one-off/guard-scan bans): those never
+            auto-expire, since they're a deliberate human or AbuseIPDB-confidence-driven block, not an
+            automatic filter match — unban from the jail's row if one turns out to be wrong.</p>
           <button class="btn btn--primary" data-run="f2b-setup">Set up fail2ban</button>
         </div>
       </section>

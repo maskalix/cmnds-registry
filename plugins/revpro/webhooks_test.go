@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestWebhookConfigRoundTrip(t *testing.T) {
@@ -78,7 +79,7 @@ func TestDeliverWebhookGeneric(t *testing.T) {
 	defer srv.Close()
 
 	wh := webhookConfig{Name: "test", URL: srv.URL, Type: "generic"}
-	if err := deliverWebhook(wh, "cert-issued", map[string]any{"cert": "example.tld"}); err != nil {
+	if _, err := deliverWebhook(wh, "cert-issued", map[string]any{"cert": "example.tld"}); err != nil {
 		t.Fatal(err)
 	}
 	if gotBody["event"] != "cert-issued" || gotBody["cert"] != "example.tld" {
@@ -96,7 +97,7 @@ func TestDeliverWebhookDiscord(t *testing.T) {
 	defer srv.Close()
 
 	wh := webhookConfig{Name: "test", URL: srv.URL, Type: "discord"}
-	if err := deliverWebhook(wh, "fail2ban-ban", map[string]any{"ip": "203.0.113.9"}); err != nil {
+	if _, err := deliverWebhook(wh, "fail2ban-ban", map[string]any{"ip": "203.0.113.9"}); err != nil {
 		t.Fatal(err)
 	}
 	embeds, _ := gotBody["embeds"].([]any)
@@ -111,8 +112,62 @@ func TestDeliverWebhookNonOKStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 	wh := webhookConfig{Name: "test", URL: srv.URL, Type: "generic"}
-	if err := deliverWebhook(wh, "test", nil); err == nil {
+	if _, err := deliverWebhook(wh, "test", nil); err == nil {
 		t.Error("expected an error for a non-2xx response")
+	}
+}
+
+func TestDeliverWebhook429ReturnsRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	wh := webhookConfig{Name: "test", URL: srv.URL, Type: "generic"}
+	retryAfter, err := deliverWebhook(wh, "test", nil)
+	if err == nil {
+		t.Error("expected an error for a 429 response")
+	}
+	if retryAfter != 30*time.Second {
+		t.Errorf("retryAfter = %v, want 30s", retryAfter)
+	}
+}
+
+func TestParseRetryAfterVariants(t *testing.T) {
+	if got := parseRetryAfter(""); got != defaultRetryAfter {
+		t.Errorf("empty header: got %v, want default %v", got, defaultRetryAfter)
+	}
+	if got := parseRetryAfter("120"); got != 120*time.Second {
+		t.Errorf("numeric header: got %v, want 120s", got)
+	}
+	if got := parseRetryAfter("not-a-valid-value"); got != defaultRetryAfter {
+		t.Errorf("garbage header: got %v, want default %v", got, defaultRetryAfter)
+	}
+}
+
+func TestFireWebhookBacksOffAfter429(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "3600") // long enough not to flake this test
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	c := &proxyConfig{mainFolder: t.TempDir()}
+	wh := webhookConfig{ID: "backoff-test-" + t.Name(), Name: "rate-limited", URL: srv.URL, Type: "generic", Events: []string{"guard-blocked"}}
+	if err := c.saveWebhooks([]webhookConfig{wh}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a guard scan blocking several IPs in a tight loop: the first
+	// call should actually hit the server and get 429'd; every call after
+	// that must be skipped locally instead of repeating the doomed request.
+	for i := 0; i < 5; i++ {
+		fireWebhook(c, "guard-blocked", map[string]any{"ip": "203.0.113.9"})
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 actual HTTP call before backing off, got %d", calls)
 	}
 }
 
