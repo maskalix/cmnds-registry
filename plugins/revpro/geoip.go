@@ -1,12 +1,15 @@
-// geoip.go — best-effort IP → country/city lookup for the IP access table,
-// via ipapi.co's free, no-signup API (unlike AbuseIPDB, no key needed).
+// geoip.go — best-effort IP → country/city/ISP lookup for the IP access
+// table, via ip-api.com's free, no-signup API (unlike AbuseIPDB, no key
+// needed — and unlike ipapi.co's free tier, it includes ISP/org data).
 // Results are cached to disk indefinitely-ish (geo rarely changes for a
 // given IP) so the table doesn't re-query the same visitors on every page
-// load — ipapi.co's free tier is limited to ~30k requests/month.
+// load — ip-api.com's free tier is limited to 45 requests/minute.
 //
-// This sends visitor IP addresses to a third-party service. That's the
-// necessary tradeoff for geolocation without self-hosting a GeoIP database;
-// it only fires for addresses actually seen in this box's own access logs.
+// This sends visitor IP addresses to a third-party service, over plain
+// HTTP (ip-api.com's free anonymous tier doesn't offer HTTPS) — that's the
+// necessary tradeoff for geolocation + ISP data without self-hosting a
+// GeoIP database. It only fires for addresses actually seen in this box's
+// own access logs, and IP addresses are the only thing sent.
 package main
 
 import (
@@ -25,6 +28,7 @@ type geoInfo struct {
 	Country     string    `json:"country,omitempty"`
 	CountryCode string    `json:"countryCode,omitempty"`
 	City        string    `json:"city,omitempty"`
+	ISP         string    `json:"isp,omitempty"`
 	Local       bool      `json:"local,omitempty"` // private/loopback — never looked up
 	LookedUpAt  time.Time `json:"lookedUpAt"`
 }
@@ -57,7 +61,7 @@ func (c *proxyConfig) saveGeoCache(m map[string]geoInfo) error {
 
 // geoLookupCached returns a cached entry when fresh, a synthetic "local"
 // entry for private/loopback IPs (no network call), or fetches+caches a
-// fresh lookup from ipapi.co.
+// fresh lookup from ip-api.com.
 func geoLookupCached(cache map[string]geoInfo, ip string) (geoInfo, error) {
 	if g, ok := cache[ip]; ok && time.Since(g.LookedUpAt) < geoCacheTTL {
 		return g, nil
@@ -76,35 +80,36 @@ func geoLookupCached(cache map[string]geoInfo, ip string) (geoInfo, error) {
 }
 
 // geoIPBase is a var (not a literal in geoLookupLive) so tests can point it
-// at an httptest.Server instead of the real ipapi.co.
-var geoIPBase = "https://ipapi.co"
+// at an httptest.Server instead of the real ip-api.com.
+var geoIPBase = "http://ip-api.com"
 
 func geoLookupLive(ip string) (geoInfo, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(geoIPBase + "/" + ip + "/json/")
+	resp, err := client.Get(geoIPBase + "/json/" + ip + "?fields=status,message,country,countryCode,city,isp")
 	if err != nil {
 		return geoInfo{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusOK {
-		return geoInfo{}, fmt.Errorf("ipapi.co %s: %s: %s", ip, resp.Status, strings.TrimSpace(string(body)))
+		return geoInfo{}, fmt.Errorf("ip-api.com %s: %s: %s", ip, resp.Status, strings.TrimSpace(string(body)))
 	}
 	var parsed struct {
-		Country     string `json:"country_name"`
-		CountryCode string `json:"country_code"`
+		Status      string `json:"status"`
+		Message     string `json:"message"`
+		Country     string `json:"country"`
+		CountryCode string `json:"countryCode"`
 		City        string `json:"city"`
-		Error       bool   `json:"error"`
-		Reason      string `json:"reason"`
+		ISP         string `json:"isp"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return geoInfo{}, fmt.Errorf("ipapi.co %s: bad response: %w", ip, err)
+		return geoInfo{}, fmt.Errorf("ip-api.com %s: bad response: %w", ip, err)
 	}
-	if parsed.Error {
-		return geoInfo{}, fmt.Errorf("ipapi.co %s: %s", ip, parsed.Reason)
+	if parsed.Status != "success" {
+		return geoInfo{}, fmt.Errorf("ip-api.com %s: %s", ip, parsed.Message)
 	}
 	return geoInfo{
-		IP: ip, Country: parsed.Country, CountryCode: parsed.CountryCode, City: parsed.City,
+		IP: ip, Country: parsed.Country, CountryCode: parsed.CountryCode, City: parsed.City, ISP: parsed.ISP,
 		LookedUpAt: time.Now(),
 	}, nil
 }

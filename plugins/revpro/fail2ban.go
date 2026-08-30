@@ -228,9 +228,27 @@ actionunban =
 `, revproPath)
 }
 
+// warnAboutDockerFail2ban checks for a docker container literally named
+// "fail2ban" — a common pattern (e.g. linuxserver/fail2ban) for watching
+// the same nginx logs revpro just configured host-level jails for. It's
+// only a warning: a containerized fail2ban usually lacks NET_ADMIN/host
+// networking, so its bans typically never reach the host's real iptables
+// rules at all — but two things tailing the same logs is worth flagging
+// either way. Best-effort; docker not being present or reachable is fine.
+func warnAboutDockerFail2ban() {
+	out, err := exec.Command("docker", "ps", "--filter", "name=^fail2ban$", "--format", "{{.Names}}: {{.Image}}").Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return
+	}
+	warn("also found a docker container watching the same logs: %s", strings.TrimSpace(string(out)))
+	warn("a containerized fail2ban usually can't actually block traffic (no NET_ADMIN/host networking) —")
+	warn("consider stopping it to avoid two things tailing the same logs: docker stop fail2ban")
+}
+
 // f2bSetup installs fail2ban (if needed), writes jail.local + the
 // AbuseIPDB action drop-in, and enables+starts the service. Safe to re-run.
 func (c *proxyConfig) f2bSetup() error {
+	warnAboutDockerFail2ban()
 	if !f2bAvailable() {
 		info("Installing fail2ban...")
 		if err := run("apt-get", "update", "-qq"); err != nil {
@@ -269,6 +287,7 @@ func (c *proxyConfig) f2bSetup() error {
 		return err
 	}
 	ok("fail2ban installed and running — jails: sshd, nginx-http-auth, nginx-botsearch, recidive, %s", manualJail)
+	fireWebhook(c, "fail2ban-setup", map[string]any{"logDir": c.logDir})
 	return nil
 }
 
@@ -315,6 +334,7 @@ func (c *proxyConfig) fail2banCmd(args []string) {
 		if err := f2bBan(args[1], args[2]); err != nil {
 			fail("%v", err)
 		}
+		fireWebhook(c, "fail2ban-ban", map[string]any{"ip": args[2], "jail": args[1]})
 		ok("Banned %s in %s", args[2], args[1])
 	case "unban":
 		if len(args) < 3 {

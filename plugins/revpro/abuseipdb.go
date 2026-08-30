@@ -289,6 +289,7 @@ func (c *proxyConfig) guardScan(limit int) (guardResult, error) {
 			}
 			res.Banned = append(res.Banned, st.IP)
 			ok("Blocked %s (AbuseIPDB score %d)", st.IP, check.Score)
+			fireWebhook(c, "guard-blocked", map[string]any{"ip": st.IP, "score": check.Score})
 		}
 	}
 	if err := c.saveAbuseCache(cache); err != nil {

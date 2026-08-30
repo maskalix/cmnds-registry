@@ -458,10 +458,12 @@ func (c *proxyConfig) issueCmd(args []string) {
 		info("Issuing %s for %v ...", s.certName, s.sans)
 		if err := iss.obtain(s.certName, s.sans); err != nil {
 			fail0("issue %s: %v", s.certName, err)
+			fireWebhook(c, "cert-issue-failed", map[string]any{"cert": s.certName, "error": err.Error()})
 			failCount++
 			continue
 		}
 		ok("Issued %s → %s/%s/", s.certName, iss.certsSub, s.certName)
+		fireWebhook(c, "cert-issued", map[string]any{"cert": s.certName})
 		okCount++
 	}
 	fmt.Printf("\nIssued %d, skipped %d, failed %d\n", okCount, skipCount, failCount)
@@ -546,10 +548,12 @@ func (c *proxyConfig) renewCmd(args []string) {
 			}
 			if err := iss.obtain(s.certName, s.sans); err != nil {
 				fail0("renew %s: %v", s.certName, err)
+				fireWebhook(c, "cert-renew-failed", map[string]any{"cert": s.certName, "error": err.Error()})
 				failed++
 				continue
 			}
 			ok2("Renewed %s", s.certName)
+			fireWebhook(c, "cert-renewed", map[string]any{"cert": s.certName})
 			renewed++
 		}
 

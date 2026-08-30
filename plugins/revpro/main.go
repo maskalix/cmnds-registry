@@ -69,6 +69,8 @@ func main() {
 		mustConfig().composeCmd()
 	case "add":
 		mustConfig().add(os.Args[2:])
+	case "edit-site":
+		mustConfig().editSite(os.Args[2:])
 	case "list":
 		mustConfig().list()
 	case "reload":
@@ -93,6 +95,10 @@ func main() {
 		mustConfig().redirectCmd(os.Args[2:])
 	case "fail2ban":
 		mustConfig().fail2banCmd(os.Args[2:])
+	case "routines":
+		mustConfig().routinesCmd(os.Args[2:])
+	case "cache":
+		mustConfig().cacheCmd(os.Args[2:])
 	case "cert":
 		certInspect(os.Args[2:])
 	case "certgen":
@@ -412,6 +418,31 @@ func (c *proxyConfig) add(args []string) {
 		}
 	}
 	c.reload()
+	fireWebhook(c, "site-added", map[string]any{"fqdn": fqdn, "target": target})
+}
+
+// editSite moves/reconfigures an existing site: removes its current
+// sites.conf line and re-adds it under the given (possibly different)
+// name/domain/target/flags/cert. This is a structured edit of the routing
+// entry itself — distinct from the web UI's "Edit config" (convertSiteToManual),
+// which hand-edits the generated nginx block and moves the site out of
+// sites.conf entirely. Usage:
+//
+//	revpro edit-site <old-fqdn> <name> <domain.tld> <host:port> [flags] [--cert="name"]
+func (c *proxyConfig) editSite(args []string) {
+	if len(args) < 4 {
+		fail(`Usage: revpro edit-site <old-fqdn> <name> <domain.tld> <host:port> [flags] [--cert="name"]`)
+	}
+	oldFqdn := args[0]
+	if err := c.removeSiteLine(oldFqdn); err != nil {
+		fail("%v", err)
+	}
+	newFqdn := args[2]
+	if args[1] != "@" {
+		newFqdn = args[1] + "." + args[2]
+	}
+	c.add(args[1:])
+	ok("Moved %s → %s", oldFqdn, newFqdn)
 }
 
 func (c *proxyConfig) list() {

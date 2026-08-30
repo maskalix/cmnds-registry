@@ -164,6 +164,8 @@ a:hover{text-decoration:underline}
 
 /* ── Tables ── */
 .tablewrap{overflow-x:auto}
+.tablewrap--scroll{max-height:26rem;overflow-y:auto}
+.tablewrap--scroll thead th{position:sticky;top:0;background:var(--surface);z-index:1}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.6rem .9rem;border-bottom:1px solid var(--line-soft);
   font-size:.8425rem;vertical-align:middle}
@@ -196,6 +198,16 @@ td .sitename{display:block;font-weight:600;color:var(--fg)}
   margin-bottom:1rem;border:1px solid var(--a);background:color-mix(in srgb,var(--a) 8%,transparent)}
 .filterbar__text{font-size:.8125rem}
 .filterbar__text b{color:var(--a)}
+
+/* ── Stat tiles (Current dashboard) ── */
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);margin-bottom:1.5rem}
+.stattile{background:var(--surface);padding:1rem 1.1rem}
+.stattile__label{font-family:var(--font-mono);font-size:.625rem;text-transform:uppercase;
+  letter-spacing:.14em;color:var(--fg-3);margin-bottom:.4rem}
+.stattile__value{font-size:1.6rem;font-weight:800;letter-spacing:-.02em}
+.stattile__value.warn{color:var(--warn)}
+.stattile__value.bad{color:var(--bad)}
 
 /* ── Site detail view ── */
 .detailhead{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:.6rem}
@@ -385,6 +397,12 @@ pre.code .k{color:#8fc7a5}
   <aside class="sidebar" data-tour="nav">
     <div class="sidebar__inner" id="nav">
       <div class="navgroup">
+        <p class="navgroup__label">Overview</p>
+        <div class="navlist">
+          <button class="navlink" data-view="current">Current</button>
+        </div>
+      </div>
+      <div class="navgroup">
         <p class="navgroup__label">Proxy</p>
         <div class="navlist">
           <button class="navlink is-active" data-view="sites">Sites</button>
@@ -397,6 +415,13 @@ pre.code .k{color:#8fc7a5}
         <div class="navlist">
           <button class="navlink" data-view="ports">Ports &amp; machines</button>
           <button class="navlink" data-view="security">Security</button>
+        </div>
+      </div>
+      <div class="navgroup">
+        <p class="navgroup__label">Automation</p>
+        <div class="navlist">
+          <button class="navlink" data-view="routines">Routines</button>
+          <button class="navlink" data-view="webhooks">Webhooks</button>
         </div>
       </div>
       <div class="navgroup">
@@ -612,6 +637,7 @@ pre.code .k{color:#8fc7a5}
             <button class="btn btn--mini" id="detail-analyze">Analyze</button>
             <button class="btn btn--mini" id="detail-issue">Issue cert</button>
             <button class="btn btn--mini" id="detail-editmeta">Edit name/tags</button>
+            <button class="btn btn--mini" id="detail-move">Move / reconfigure</button>
             <button class="btn btn--mini" id="detail-editconf">Edit config</button>
           </div>
         </div>
@@ -735,10 +761,12 @@ pre.code .k{color:#8fc7a5}
           <h3 class="panel__title">fail2ban jails</h3>
           <button class="btn btn--mini" data-run="f2b-setup">Re-run setup</button>
         </header>
+        <p class="hint" style="margin:0 1.1rem .8rem">Click a jail to see its full banned-IP list (scrollable,
+          with geolocation) — the inline count here stays short even for a jail with dozens of bans.</p>
         <div class="panel__body panel__body--flush tablewrap">
           <table id="f2bjailstable">
             <thead><tr>
-              <th>Jail</th><th>Banned</th><th>Failed</th><th>Banned IPs</th>
+              <th>Jail</th><th>Banned</th><th>Failed</th><th></th>
             </tr></thead>
             <tbody></tbody>
           </table>
@@ -793,12 +821,134 @@ pre.code .k{color:#8fc7a5}
           <h3 class="panel__title">IP access <span id="ipcount"></span></h3>
           <button class="btn btn--mini" id="ip-refresh">Refresh</button>
         </header>
-        <div class="panel__body panel__body--flush tablewrap">
+        <div class="panel__body panel__body--flush tablewrap tablewrap--scroll">
           <table id="iptable">
             <thead><tr>
-              <th>IP</th><th>Location</th><th>Requests</th><th>Sites</th><th>Last seen</th>
+              <th>IP</th><th>Location</th><th>ISP</th><th>Requests</th><th>Sites</th><th>Last seen</th>
               <th>Abuse score</th><th>Status</th><th></th>
             </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- ============================ ROUTINES ============================ -->
+    <section class="view" id="view-routines">
+      <div class="pagehead">
+        <p class="pagehead__kicker">automation</p>
+        <h1 class="pagehead__title">Routines</h1>
+        <p class="pagehead__lede">Periodic maintenance revpro can run on its own — enable a task and set how
+          often, in minutes. A small daemon (<code>revpro-routines.service</code>) checks once a minute for
+          anything due.</p>
+      </div>
+
+      <section class="panel" id="routines-uninstalled-panel" style="display:none">
+        <header class="panel__head"><h3 class="panel__title">Scheduler</h3></header>
+        <div class="panel__body">
+          <p class="hint" style="margin-top:0">The scheduler daemon isn't installed yet — routines below are
+            saved but won't run until it is.</p>
+          <button class="btn btn--primary" data-run="routines-setup">Install scheduler</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head">
+          <h3 class="panel__title">Scheduled tasks</h3>
+          <button class="btn btn--mini" type="submit" form="routinesform">Save</button>
+        </header>
+        <form id="routinesform" class="panel__body panel__body--flush tablewrap">
+          <table id="routinestable">
+            <thead><tr>
+              <th></th><th>Task</th><th>Every (minutes)</th><th>Last run</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </form>
+        <div class="panel__body">
+          <span class="savemsg" id="routines-msg"></span>
+        </div>
+      </section>
+    </section>
+
+    <!-- ============================ WEBHOOKS ============================ -->
+    <section class="view" id="view-webhooks">
+      <div class="pagehead">
+        <p class="pagehead__kicker">automation</p>
+        <h1 class="pagehead__title">Webhooks</h1>
+        <p class="pagehead__lede">Notify a URL (generic JSON POST, or Discord's webhook format) when
+          something happens — a cert issue/renewal (or its failure), a new site, a fail2ban ban, fail2ban
+          setup completing, a guard-scan block, or a routine failing.</p>
+      </div>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Configured webhooks</h3></header>
+        <div class="panel__body panel__body--flush tablewrap">
+          <table id="webhookstable">
+            <thead><tr><th>Name</th><th>Type</th><th>Events</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <form class="panel" id="webhookform">
+        <header class="panel__head"><h3 class="panel__title">Add a webhook</h3></header>
+        <div class="panel__body">
+          <div class="formgrid">
+            <div class="field">
+              <label for="wh-name">Name</label>
+              <input type="text" id="wh-name" placeholder="ops alerts" required>
+            </div>
+            <div class="field">
+              <label for="wh-type">Type</label>
+              <select id="wh-type">
+                <option value="generic">Generic (JSON POST)</option>
+                <option value="discord">Discord</option>
+              </select>
+            </div>
+            <div class="full field">
+              <label for="wh-url">URL</label>
+              <input type="text" id="wh-url" placeholder="https://discord.com/api/webhooks/..." required>
+            </div>
+            <div class="full">
+              <label class="field__label">Events</label>
+              <div class="checks" id="wh-events"></div>
+            </div>
+            <div class="full"><button type="submit" class="btn btn--primary">Add webhook</button></div>
+          </div>
+          <span class="savemsg" id="webhook-msg"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- ============================ CURRENT ============================ -->
+    <section class="view" id="view-current">
+      <div class="pagehead">
+        <p class="pagehead__kicker">overview</p>
+        <h1 class="pagehead__title">Current</h1>
+        <p class="pagehead__lede">A live snapshot: recent traffic, top visitor IPs, and this box's own vitals.</p>
+      </div>
+
+      <div class="statgrid" id="current-stats"></div>
+
+      <section class="panel">
+        <header class="panel__head">
+          <h3 class="panel__title">Recent activity</h3>
+          <button class="btn btn--mini" id="current-refresh">Refresh</button>
+        </header>
+        <div class="panel__body panel__body--flush tablewrap tablewrap--scroll">
+          <table id="currentlogtable">
+            <thead><tr><th>Time</th><th>Site</th><th>IP</th><th>Request</th><th>Status</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Top visitor IPs</h3></header>
+        <div class="panel__body panel__body--flush tablewrap">
+          <table id="currentiptable">
+            <thead><tr><th>IP</th><th>Requests</th><th>Sites</th><th>Last seen</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1295,6 +1445,64 @@ docker compose up -d reverseproxy   <span class="c"># 3. certs exist → nginx s
   </div>
 </div>
 
+<div class="modal" id="jailmodal" role="dialog" aria-modal="true">
+  <div class="modal__overlay" id="jailmodal-overlay"></div>
+  <div class="modal__box" style="max-width:36rem">
+    <h2 class="modal__title">Jail: <span id="jailmodal-name" class="mono"></span></h2>
+    <p class="modal__sub" id="jailmodal-count"></p>
+    <div class="tablewrap tablewrap--scroll">
+      <table id="jailmodaltable">
+        <thead><tr><th>IP</th><th>Location</th><th>ISP</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal__actions">
+      <button class="btn" id="jailmodal-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="editsitemodal" role="dialog" aria-modal="true">
+  <div class="modal__overlay" id="editsitemodal-overlay"></div>
+  <div class="modal__box" style="max-width:34rem">
+    <h2 class="modal__title">Move / reconfigure site</h2>
+    <p class="modal__sub mono" id="editsitemodal-fqdn"></p>
+    <div class="formgrid">
+      <div class="field">
+        <label for="es-name">Subdomain (@ = apex)</label>
+        <input type="text" id="es-name" placeholder="app" required>
+      </div>
+      <div class="field">
+        <label for="es-domain">Domain (group)</label>
+        <input type="text" id="es-domain" list="groupslist" placeholder="example.tld" required>
+      </div>
+      <div class="field">
+        <label for="es-host">Machine (host or slug)</label>
+        <input type="text" id="es-host" list="machinelist" placeholder="10.0.0.2 or A" required>
+      </div>
+      <div class="field">
+        <label for="es-port">Port</label>
+        <input type="number" id="es-port" min="1" max="65535" placeholder="8080" required>
+      </div>
+      <div class="full checks">
+        <label><input type="checkbox" id="es-a"> auth proxy (a)</label>
+        <label><input type="checkbox" id="es-s"> https upstream (s)</label>
+        <label><input type="checkbox" id="es-w" checked> www variant (w)</label>
+        <label><input type="checkbox" id="es-l"> local only (l)</label>
+      </div>
+      <div class="full field">
+        <label for="es-cert">Cert name override (optional)</label>
+        <input type="text" id="es-cert" placeholder="defaults to the site's fqdn">
+      </div>
+    </div>
+    <div class="modal__actions">
+      <button class="btn" id="editsitemodal-cancel">Cancel</button>
+      <button class="btn btn--primary" id="editsitemodal-save">Save</button>
+    </div>
+    <span class="savemsg" id="editsitemodal-msg"></span>
+  </div>
+</div>
+
 <script>
 "use strict";
 let S = {csrf:"", user:"", sites:[], categories:[], machines:{}, groups:[], slugs:[], setup:{}};
@@ -1741,6 +1949,53 @@ $("#detail-issue").addEventListener("click", () => {
 });
 $("#detail-editmeta").addEventListener("click", () => { if (detailFqdn) openSiteMeta(detailFqdn); });
 $("#detail-editconf").addEventListener("click", () => { if (detailFqdn) openSiteConfig(detailFqdn); });
+$("#detail-move").addEventListener("click", () => { if (detailFqdn) openEditSiteModal(detailFqdn); });
+
+/* ---------- move / reconfigure site (structured sites.conf edit) ---------- */
+let editingSiteFqdn = null;
+
+function openEditSiteModal(fqdn){
+  const st = (S.sites||[]).find(s => s.fqdn === fqdn);
+  if (!st) return;
+  editingSiteFqdn = fqdn;
+  $("#editsitemodal-fqdn").textContent = fqdn;
+  $("#es-name").value = st.fqdn === st.group ? "@" : st.fqdn.slice(0, st.fqdn.length - st.group.length - 1);
+  $("#es-domain").value = st.group;
+  $("#es-host").value = st.machine || "";
+  $("#es-port").value = st.port || "";
+  $("#es-a").checked = !!st.auth;
+  $("#es-s").checked = !!st.https;
+  $("#es-w").checked = !!st.www;
+  $("#es-l").checked = !!st.local;
+  $("#es-cert").value = (st.cert && st.cert !== st.fqdn) ? st.cert : "";
+  $("#editsitemodal-msg").textContent = ""; $("#editsitemodal-msg").className = "savemsg";
+  $("#editsitemodal").classList.add("is-on");
+  $("#es-name").focus();
+}
+function closeEditSiteModal(){
+  $("#editsitemodal").classList.remove("is-on");
+  editingSiteFqdn = null;
+}
+$("#editsitemodal-overlay").addEventListener("click", closeEditSiteModal);
+$("#editsitemodal-cancel").addEventListener("click", closeEditSiteModal);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("#editsitemodal").classList.contains("is-on")) closeEditSiteModal();
+});
+$("#editsitemodal-save").addEventListener("click", () => {
+  if (!editingSiteFqdn) return;
+  const oldFqdn = editingSiteFqdn;
+  const target = $("#es-host").value.trim() + ":" + $("#es-port").value.trim();
+  const body = {
+    oldFqdn,
+    name: $("#es-name").value.trim(),
+    domain: $("#es-domain").value.trim(),
+    target,
+    cert: $("#es-cert").value.trim(),
+    flags: {A: $("#es-a").checked, S: $("#es-s").checked, W: $("#es-w").checked, L: $("#es-l").checked},
+  };
+  closeEditSiteModal();
+  stream("/api/sites/edit", body, "move " + oldFqdn);
+});
 
 async function loadSiteDetailLogs(){
   const view = $("#detail-logview");
@@ -2138,17 +2393,14 @@ function renderF2BPanel(f2b){
     t3.textContent = j.currentFailed + " / " + j.totalFailed;
     tr.appendChild(t3);
     const t4 = document.createElement("td");
-    (j.bannedIPs||[]).forEach(ip => {
-      const wrap = document.createElement("span");
-      wrap.style.marginRight = ".4rem"; wrap.style.display = "inline-flex"; wrap.style.alignItems = "center"; wrap.style.gap = ".2rem";
-      wrap.appendChild(chip(ip, "bad"));
-      const un = document.createElement("button");
-      un.className = "btn btn--mini"; un.textContent = "unban";
-      un.onclick = () => f2bUnbanIP(j.name, ip);
-      wrap.appendChild(un);
-      t4.appendChild(wrap);
-    });
-    if (!(j.bannedIPs||[]).length) t4.innerHTML = '<span class="dim">—</span>';
+    if (j.currentBanned > 0){
+      const viewBtn = document.createElement("button");
+      viewBtn.className = "btn btn--mini"; viewBtn.textContent = "view " + j.currentBanned;
+      viewBtn.onclick = () => openJailModal(j.name);
+      t4.appendChild(viewBtn);
+    } else {
+      t4.innerHTML = '<span class="dim">—</span>';
+    }
     tr.appendChild(t4);
     tb.appendChild(tr);
   });
@@ -2158,6 +2410,47 @@ function renderF2BPanel(f2b){
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
+
+/* ---------- jail detail modal (scrollable, geo-enriched banned-IP list) ---------- */
+async function openJailModal(name){
+  $("#jailmodal-name").textContent = name;
+  $("#jailmodal-count").textContent = "loading…";
+  $("#jailmodaltable tbody").innerHTML = "";
+  $("#jailmodal").classList.add("is-on");
+  try {
+    const d = await apiJSON("/api/security/f2b/jail?name=" + encodeURIComponent(name));
+    const rows = d.bannedIPs || [];
+    $("#jailmodal-count").textContent = rows.length + " banned IP" + (rows.length === 1 ? "" : "s");
+    const tb = $("#jailmodaltable tbody");
+    rows.forEach(row => {
+      const tr = document.createElement("tr");
+      const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = row.ip;
+      tr.appendChild(t1);
+      const t2 = document.createElement("td");
+      t2.textContent = row.countryCode ? (countryFlag(row.countryCode) + " " + (row.country || row.countryCode) + (row.city ? " · " + row.city : "")) : "—";
+      tr.appendChild(t2);
+      const t3 = document.createElement("td"); t3.className = "dim"; t3.textContent = row.isp || "—";
+      tr.appendChild(t3);
+      const t4 = document.createElement("td");
+      const un = document.createElement("button");
+      un.className = "btn btn--mini"; un.textContent = "unban";
+      un.onclick = async () => { await f2bUnbanIP(name, row.ip); openJailModal(name); };
+      t4.appendChild(un);
+      tr.appendChild(t4);
+      tb.appendChild(tr);
+    });
+    if (!rows.length){
+      const tr = document.createElement("tr");
+      const td = document.createElement("td"); td.colSpan = 4; td.className = "empty"; td.textContent = "No banned IPs.";
+      tr.appendChild(td); tb.appendChild(tr);
+    }
+  } catch(e){
+    $("#jailmodal-count").textContent = "✗ " + e.message;
+  }
+}
+function closeJailModal(){ $("#jailmodal").classList.remove("is-on"); }
+$("#jailmodal-overlay").addEventListener("click", closeJailModal);
+$("#jailmodal-close").addEventListener("click", closeJailModal);
 
 async function f2bUnbanIP(jail, ip){
   try {
@@ -2210,7 +2503,7 @@ async function loadIPTable(){
     $("#ipcount").textContent = "";
     const tb = $("#iptable tbody"); tb.innerHTML = "";
     const tr = document.createElement("tr");
-    const td = document.createElement("td"); td.colSpan = 8; td.className = "empty"; td.textContent = "✗ " + e.message;
+    const td = document.createElement("td"); td.colSpan = 9; td.className = "empty"; td.textContent = "✗ " + e.message;
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
@@ -2228,9 +2521,12 @@ function renderIPTable(d){
 
     const t2 = document.createElement("td");
     if (row.local) t2.innerHTML = '<span class="dim">LAN</span>';
-    else if (row.countryCode) t2.textContent = countryFlag(row.countryCode) + " " + (row.country || row.countryCode);
+    else if (row.countryCode) t2.textContent = countryFlag(row.countryCode) + " " + (row.country || row.countryCode) + (row.city ? " · " + row.city : "");
     else t2.innerHTML = '<span class="dim">—</span>';
     tr.appendChild(t2);
+
+    const t2b = document.createElement("td"); t2b.className = "dim"; t2b.textContent = row.isp || "—";
+    tr.appendChild(t2b);
 
     const t3 = document.createElement("td"); t3.className = "mono"; t3.textContent = row.requests;
     tr.appendChild(t3);
@@ -2268,7 +2564,243 @@ function renderIPTable(d){
   });
   if (!rows.length){
     const tr = document.createElement("tr");
-    const td = document.createElement("td"); td.colSpan = 8; td.className = "empty"; td.textContent = "No traffic logged yet.";
+    const td = document.createElement("td"); td.colSpan = 9; td.className = "empty"; td.textContent = "No traffic logged yet.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
+/* ---------- routines (scheduled maintenance) ---------- */
+async function loadRoutines(){
+  try {
+    const d = await apiJSON("/api/routines");
+    renderRoutines(d);
+  } catch(e){
+    consoleOpen(); consoleAppend("[error] routines: " + e.message + "\n");
+  }
+}
+
+function renderRoutines(d){
+  $("#routines-uninstalled-panel").style.display = d.schedulerInstalled ? "none" : "";
+  const tb = $("#routinestable tbody"); tb.innerHTML = "";
+  (d.routines||[]).forEach(t => {
+    const tr = document.createElement("tr");
+
+    const t1 = document.createElement("td");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = t.enabled;
+    cb.dataset.routineEnabled = t.id;
+    t1.appendChild(cb);
+    tr.appendChild(t1);
+
+    const t2 = document.createElement("td");
+    const nm = document.createElement("span"); nm.style.fontWeight = "600"; nm.textContent = t.name;
+    t2.appendChild(nm);
+    const desc = document.createElement("div"); desc.className = "dim"; desc.style.fontSize = ".75rem"; desc.textContent = t.description;
+    t2.appendChild(desc);
+    tr.appendChild(t2);
+
+    const t3 = document.createElement("td");
+    const iv = document.createElement("input"); iv.type = "number"; iv.min = "0"; iv.max = "43200";
+    iv.style.width = "6rem"; iv.value = t.intervalMinutes || "";
+    iv.placeholder = "off"; iv.dataset.routineInterval = t.id;
+    t3.appendChild(iv);
+    tr.appendChild(t3);
+
+    const t4 = document.createElement("td"); t4.className = "dim"; t4.style.fontSize = ".75rem";
+    t4.textContent = t.lastRun ? timeAgo(t.lastRun) + (t.lastStatus && t.lastStatus !== "ok" ? " — ✗ " + t.lastStatus : " — ✓") : "never run";
+    tr.appendChild(t4);
+
+    const t5 = document.createElement("td");
+    const runBtn = document.createElement("button");
+    runBtn.type = "button"; runBtn.className = "btn btn--mini"; runBtn.textContent = "run now";
+    runBtn.onclick = () => stream("/api/routines/run", {id: t.id}, "routine " + t.id);
+    t5.appendChild(runBtn);
+    tr.appendChild(t5);
+
+    tb.appendChild(tr);
+  });
+}
+
+$("#routinesform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#routines-msg"); msg.textContent = ""; msg.className = "savemsg";
+  const routines = $$("[data-routine-enabled]").map(cb => ({
+    id: cb.dataset.routineEnabled,
+    enabled: cb.checked,
+    intervalMinutes: parseInt($(`[data-routine-interval="${cb.dataset.routineEnabled}"]`).value, 10) || 0,
+  }));
+  try {
+    await apiJSON("/api/routines", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({routines})});
+    msg.textContent = "Saved"; msg.classList.add("ok");
+    loadRoutines();
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+/* ---------- webhooks ---------- */
+async function loadWebhooks(){
+  try {
+    const d = await apiJSON("/api/webhooks");
+    renderWebhookEventChecks(d.events||[]);
+    renderWebhooks(d.webhooks||[]);
+  } catch(e){
+    consoleOpen(); consoleAppend("[error] webhooks: " + e.message + "\n");
+  }
+}
+
+function renderWebhookEventChecks(events){
+  const wrap = $("#wh-events");
+  if (wrap.dataset.built) return; // the event list is static — build once
+  wrap.innerHTML = "";
+  events.forEach(ev => {
+    const label = document.createElement("label");
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.value = ev; cb.className = "whevent";
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(" " + ev));
+    wrap.appendChild(label);
+  });
+  wrap.dataset.built = "1";
+}
+
+function renderWebhooks(list){
+  const tb = $("#webhookstable tbody"); tb.innerHTML = "";
+  list.forEach(wh => {
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.textContent = wh.name;
+    tr.appendChild(t1);
+    const t2 = document.createElement("td");
+    t2.appendChild(chip(wh.type, wh.type === "discord" ? "accent" : ""));
+    tr.appendChild(t2);
+    const t3 = document.createElement("td"); t3.className = "dim"; t3.style.fontSize = ".75rem";
+    t3.textContent = (wh.events||[]).join(", ");
+    tr.appendChild(t3);
+    const t4 = document.createElement("td");
+    const testBtn = document.createElement("button");
+    testBtn.type = "button"; testBtn.className = "btn btn--mini"; testBtn.textContent = "test";
+    testBtn.onclick = () => testWebhook(wh.id);
+    t4.appendChild(testBtn);
+    t4.appendChild(document.createTextNode(" "));
+    const delBtn = document.createElement("button");
+    delBtn.type = "button"; delBtn.className = "btn btn--mini"; delBtn.textContent = "delete";
+    delBtn.onclick = () => deleteWebhook(wh.id);
+    t4.appendChild(delBtn);
+    tr.appendChild(t4);
+    tb.appendChild(tr);
+  });
+  if (!list.length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 4; td.className = "empty"; td.textContent = "No webhooks configured.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
+async function testWebhook(id){
+  try {
+    await apiJSON("/api/webhooks/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id})});
+    alert("Test delivery sent.");
+  } catch(e){ alert("✗ " + e.message); }
+}
+async function deleteWebhook(id){
+  if (!confirm("Delete this webhook?")) return;
+  try {
+    const d = await apiJSON("/api/webhooks/delete", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({id})});
+    renderWebhooks(d.webhooks||[]);
+  } catch(e){ alert(e.message); }
+}
+
+$("#webhookform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#webhook-msg"); msg.textContent = ""; msg.className = "savemsg";
+  const events = $$(".whevent").filter(c => c.checked).map(c => c.value);
+  try {
+    const d = await apiJSON("/api/webhooks", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        name: $("#wh-name").value.trim(),
+        url: $("#wh-url").value.trim(),
+        type: $("#wh-type").value,
+        events,
+      })});
+    e.target.reset();
+    $$(".whevent").forEach(c => c.checked = false);
+    renderWebhooks(d.webhooks||[]);
+    msg.textContent = "Added"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+/* ---------- current (dashboard overview) ---------- */
+function statTile(label, value, cls){
+  const t = document.createElement("div"); t.className = "stattile";
+  const l = document.createElement("div"); l.className = "stattile__label"; l.textContent = label;
+  const v = document.createElement("div"); v.className = "stattile__value" + (cls ? " " + cls : ""); v.textContent = value;
+  t.appendChild(l); t.appendChild(v);
+  return t;
+}
+
+async function loadCurrent(){
+  try {
+    const d = await apiJSON("/api/current");
+    renderCurrent(d);
+  } catch(e){
+    consoleOpen(); consoleAppend("[error] current: " + e.message + "\n");
+  }
+}
+$("#current-refresh").addEventListener("click", loadCurrent);
+
+function renderCurrent(d){
+  const s = d.stats || {}, p = d.perf || {};
+  const grid = $("#current-stats"); grid.innerHTML = "";
+  grid.appendChild(statTile("Sites", s.sites ?? "—"));
+  grid.appendChild(statTile("fail2ban jails", s.f2bInstalled ? s.jails : "off", s.f2bInstalled ? "" : "warn"));
+  grid.appendChild(statTile("Currently banned", s.bannedTotal ?? 0, s.bannedTotal > 0 ? "warn" : ""));
+  grid.appendChild(statTile("Certs expiring <30d", s.certsExpiringSoon ?? 0, s.certsExpiringSoon > 0 ? "bad" : ""));
+  grid.appendChild(statTile("Load avg (1m)", (p.loadAvg1 ?? 0).toFixed(2)));
+  grid.appendChild(statTile("Memory free", p.memTotalMB ? Math.round(p.memAvailMB/p.memTotalMB*100) + "%" : "—"));
+  grid.appendChild(statTile("Disk free", p.diskTotalGB ? p.diskFreeGB.toFixed(1) + " GB" : "—"));
+
+  const tb = $("#currentlogtable tbody"); tb.innerHTML = "";
+  (d.events||[]).forEach(ev => {
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.className = "dim"; t1.style.fontSize = ".75rem";
+    t1.textContent = ev.time ? timeAgo(ev.time) : "—";
+    tr.appendChild(t1);
+    const t2 = document.createElement("td"); t2.className = "mono"; t2.textContent = ev.site || "—";
+    tr.appendChild(t2);
+    const t3 = document.createElement("td"); t3.className = "mono"; t3.textContent = ev.ip;
+    tr.appendChild(t3);
+    const t4 = document.createElement("td"); t4.className = "mono"; t4.style.fontSize = ".75rem";
+    t4.textContent = (ev.method || "") + " " + (ev.path || "");
+    tr.appendChild(t4);
+    const t5 = document.createElement("td");
+    t5.appendChild(chip(ev.status || "—", ev.status >= 500 ? "bad" : ev.status >= 400 ? "warn" : "ok"));
+    tr.appendChild(t5);
+    tb.appendChild(tr);
+  });
+  if (!(d.events||[]).length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 5; td.className = "empty"; td.textContent = "No recent activity.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+
+  const ib = $("#currentiptable tbody"); ib.innerHTML = "";
+  (d.ips||[]).forEach(ip => {
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = ip.ip;
+    tr.appendChild(t1);
+    const t2 = document.createElement("td"); t2.className = "mono"; t2.textContent = ip.requests;
+    tr.appendChild(t2);
+    const t3 = document.createElement("td"); t3.className = "dim"; t3.textContent = (ip.sites||[]).join(", ");
+    tr.appendChild(t3);
+    const t4 = document.createElement("td"); t4.className = "dim";
+    t4.textContent = ip.lastSeen ? timeAgo(ip.lastSeen) : "—";
+    tr.appendChild(t4);
+    ib.appendChild(tr);
+  });
+  if (!(d.ips||[]).length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 4; td.className = "empty"; td.textContent = "No traffic logged yet.";
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
@@ -2361,6 +2893,9 @@ function showView(name){
   if (name === "config") { loadConf("sites"); loadConf("ports"); loadConf("machines"); }
   if (name === "branding") { renderBrandForm(); }
   if (name === "security") { loadSecurity(); }
+  if (name === "routines") { loadRoutines(); }
+  if (name === "webhooks") { loadWebhooks(); }
+  if (name === "current") { loadCurrent(); }
   window.scrollTo({top:0});
 }
 $("#nav").addEventListener("click", e => {
@@ -2376,6 +2911,10 @@ $("#actions").addEventListener("click", e => {
   stream("/api/run", {action: b.dataset.run}, b.dataset.run);
 });
 $("#view-security").addEventListener("click", e => {
+  const b = e.target.closest("button[data-run]"); if (!b || b.disabled) return;
+  stream("/api/run", {action: b.dataset.run}, b.dataset.run);
+});
+$("#view-routines").addEventListener("click", e => {
   const b = e.target.closest("button[data-run]"); if (!b || b.disabled) return;
   stream("/api/run", {action: b.dataset.run}, b.dataset.run);
 });

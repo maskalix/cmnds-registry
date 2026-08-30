@@ -18,16 +18,16 @@ func withFakeGeoIP(t *testing.T, handler http.HandlerFunc) {
 
 func TestGeoLookupLiveParsesFields(t *testing.T) {
 	withFakeGeoIP(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/203.0.113.9/json/" {
+		if r.URL.Path != "/json/203.0.113.9" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"country_name":"United States","country_code":"US","city":"Ashburn"}`))
+		w.Write([]byte(`{"status":"success","country":"United States","countryCode":"US","city":"Ashburn","isp":"Amazon.com, Inc."}`))
 	})
 	g, err := geoLookupLive("203.0.113.9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Country != "United States" || g.CountryCode != "US" || g.City != "Ashburn" {
+	if g.Country != "United States" || g.CountryCode != "US" || g.City != "Ashburn" || g.ISP != "Amazon.com, Inc." {
 		t.Errorf("parsed = %+v", g)
 	}
 	if g.LookedUpAt.IsZero() {
@@ -37,10 +37,10 @@ func TestGeoLookupLiveParsesFields(t *testing.T) {
 
 func TestGeoLookupLiveErrorField(t *testing.T) {
 	withFakeGeoIP(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"error":true,"reason":"Reserved IP Address"}`))
+		w.Write([]byte(`{"status":"fail","message":"reserved range"}`))
 	})
 	if _, err := geoLookupLive("10.0.0.1"); err == nil {
-		t.Error("expected an error when the provider reports error:true")
+		t.Error("expected an error when the provider reports status:fail")
 	}
 }
 

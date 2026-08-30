@@ -115,6 +115,7 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("POST /api/conf", ws.auth.requireSession(ws.handleConfSave))
 	mux.HandleFunc("POST /api/run", ws.auth.requireSession(ws.handleRun))
 	mux.HandleFunc("POST /api/sites/add", ws.auth.requireSession(ws.handleAddSite))
+	mux.HandleFunc("POST /api/sites/edit", ws.auth.requireSession(ws.handleEditSite))
 	mux.HandleFunc("POST /api/sites/meta", ws.auth.requireSession(ws.handleSiteMeta))
 	mux.HandleFunc("GET /api/sites/config", ws.auth.requireSession(ws.handleSiteConfig))
 	mux.HandleFunc("POST /api/sites/manualize", ws.auth.requireSession(ws.handleSiteManualize))
@@ -127,10 +128,19 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/ports/check", ws.auth.requireSession(ws.handlePortCheck))
 	mux.HandleFunc("GET /api/security-check", ws.auth.requireSession(ws.handleSecurityCheck))
 	mux.HandleFunc("GET /api/security/f2b", ws.auth.requireSession(ws.handleF2BStatus))
+	mux.HandleFunc("GET /api/security/f2b/jail", ws.auth.requireSession(ws.handleF2BJailDetail))
 	mux.HandleFunc("POST /api/security/f2b/ban", ws.auth.requireSession(ws.handleF2BBan))
 	mux.HandleFunc("POST /api/security/f2b/unban", ws.auth.requireSession(ws.handleF2BUnban))
 	mux.HandleFunc("GET /api/security/ips", ws.auth.requireSession(ws.handleSecurityIPs))
 	mux.HandleFunc("POST /api/security/abuseipdb", ws.auth.requireSession(ws.handleAbuseIPDBSave))
+	mux.HandleFunc("GET /api/routines", ws.auth.requireSession(ws.handleRoutinesGet))
+	mux.HandleFunc("POST /api/routines", ws.auth.requireSession(ws.handleRoutinesSave))
+	mux.HandleFunc("POST /api/routines/run", ws.auth.requireSession(ws.handleRoutineRun))
+	mux.HandleFunc("GET /api/webhooks", ws.auth.requireSession(ws.handleWebhooksGet))
+	mux.HandleFunc("POST /api/webhooks", ws.auth.requireSession(ws.handleWebhookSave))
+	mux.HandleFunc("POST /api/webhooks/delete", ws.auth.requireSession(ws.handleWebhookDelete))
+	mux.HandleFunc("POST /api/webhooks/test", ws.auth.requireSession(ws.handleWebhookTest))
+	mux.HandleFunc("GET /api/current", ws.auth.requireSession(ws.handleCurrent))
 	mux.HandleFunc("POST /api/brand", ws.auth.requireSession(ws.handleBrandSave))
 	mux.HandleFunc("POST /api/brand/logo", ws.auth.requireSession(ws.handleBrandLogoUpload))
 	mux.HandleFunc("POST /api/brand/logo/remove", ws.auth.requireSession(ws.handleBrandLogoRemove))
@@ -537,6 +547,7 @@ var simpleActions = map[string][]string{
 	"list":             {"list"},
 	"f2b-setup":        {"fail2ban", "setup"},
 	"f2b-guard":        {"fail2ban", "guard"},
+	"routines-setup":   {"routines", "setup"},
 }
 
 func (ws *webServer) handleRun(w http.ResponseWriter, r *http.Request, _ *webSession) {
@@ -679,6 +690,70 @@ func (ws *webServer) handleAddSite(w http.ResponseWriter, r *http.Request, _ *we
 	want := siteFlags{auth: req.Flags.A, https: req.Flags.S, www: req.Flags.W, local: req.Flags.L}
 
 	args := []string{"add", req.Name, req.Domain, target}
+	args = append(args, diffTokens(base, want)...)
+	if req.Cert != "" {
+		args = append(args, `--cert=`+req.Cert)
+	}
+	ws.streamCommand(w, r, args)
+}
+
+// handleEditSite moves/reconfigures an existing site — new name/domain
+// (group)/target/flags/cert — by removing its current sites.conf line and
+// re-adding it, via 'revpro edit-site'. Shares handleAddSite's validation
+// and group-default diffing; the only addition is the fqdn being replaced.
+func (ws *webServer) handleEditSite(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		OldFQDN string `json:"oldFqdn"`
+		Name    string `json:"name"`
+		Domain  string `json:"domain"`
+		Target  string `json:"target"`
+		Cert    string `json:"cert"`
+		Flags   struct {
+			A, S, W, L bool
+		} `json:"flags"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if _, found := ws.findSite(req.OldFQDN); !found {
+		httpErrJSON(w, http.StatusNotFound, "no such site: "+req.OldFQDN)
+		return
+	}
+	if req.Name != "@" && !labelRe.MatchString(req.Name) {
+		httpErrJSON(w, http.StatusBadRequest, "bad subdomain name (use '@' for the apex)")
+		return
+	}
+	if !domainRe.MatchString(req.Domain) {
+		httpErrJSON(w, http.StatusBadRequest, "bad domain")
+		return
+	}
+	host, port := splitTarget(req.Target)
+	if host == "" || strings.HasPrefix(host, "-") || atoiSafe(port) < 1 || atoiSafe(port) > 65535 {
+		httpErrJSON(w, http.StatusBadRequest, "target must be host:port")
+		return
+	}
+	if req.Cert != "" && !nameRe.MatchString(req.Cert) {
+		httpErrJSON(w, http.StatusBadRequest, "bad cert name")
+		return
+	}
+
+	base := defaultFlags()
+	target := req.Target
+	if gm, err := ws.c.groupMeta(); err == nil {
+		if g, okg := gm[req.Domain]; okg {
+			base = g.flags
+			if g.machine != "" {
+				slugs, _ := ws.c.machineSlugs()
+				if resolveMachine(slugs, host) == resolveMachine(slugs, g.machine) {
+					target = port
+				}
+			}
+		}
+	}
+	want := siteFlags{auth: req.Flags.A, https: req.Flags.S, www: req.Flags.W, local: req.Flags.L}
+
+	args := []string{"edit-site", req.OldFQDN, req.Name, req.Domain, target}
 	args = append(args, diffTokens(base, want)...)
 	if req.Cert != "" {
 		args = append(args, `--cert=`+req.Cert)
@@ -1276,6 +1351,48 @@ func (ws *webServer) handleF2BStatus(w http.ResponseWriter, _ *http.Request, _ *
 	})
 }
 
+type bannedIPRow struct {
+	IP          string `json:"ip"`
+	Country     string `json:"country,omitempty"`
+	CountryCode string `json:"countryCode,omitempty"`
+	City        string `json:"city,omitempty"`
+	ISP         string `json:"isp,omitempty"`
+}
+
+// handleF2BJailDetail returns one jail's banned IPs with geo enrichment —
+// the web UI's "open a jail" view, which needs to stay usable (scrollable,
+// not a wall of chips) even for a jail with dozens of bans.
+func (ws *webServer) handleF2BJailDetail(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	name := r.URL.Query().Get("name")
+	if !jailNameRe.MatchString(name) {
+		httpErrJSON(w, http.StatusBadRequest, "bad jail name")
+		return
+	}
+	js, err := f2bJailStatus(name)
+	if err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	geoCache := ws.c.loadGeoCache()
+	liveLookups, geoDirty := 0, false
+	// A jail can hold far more IPs than one page load should wait on live
+	// lookups for (the picshr example that prompted this had 50+) — cap
+	// generously higher than the table's per-request budget since this is
+	// a deliberate "open this jail" action, not a background page load.
+	const maxLive = 40
+
+	rows := make([]bannedIPRow, 0, len(js.BannedIPs))
+	for _, ip := range js.BannedIPs {
+		g := boundedGeoLookup(geoCache, ip, &liveLookups, maxLive, &geoDirty)
+		rows = append(rows, bannedIPRow{IP: ip, Country: g.Country, CountryCode: g.CountryCode, City: g.City, ISP: g.ISP})
+	}
+	if geoDirty {
+		_ = ws.c.saveGeoCache(geoCache)
+	}
+	writeJSON(w, map[string]any{"name": name, "bannedIPs": rows})
+}
+
 func f2bBanRequest(w http.ResponseWriter, r *http.Request) (jail, ip string, err error) {
 	var req struct{ Jail, IP string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
@@ -1325,6 +1442,8 @@ type ipRowJSON struct {
 	LastSeen    string   `json:"lastSeen,omitempty"`
 	Country     string   `json:"country,omitempty"`
 	CountryCode string   `json:"countryCode,omitempty"`
+	City        string   `json:"city,omitempty"`
+	ISP         string   `json:"isp,omitempty"`
 	Local       bool     `json:"local"`
 	AbuseScore  int      `json:"abuseScore"` // -1 = not checked yet
 	Banned      bool     `json:"banned"`
@@ -1336,6 +1455,25 @@ type ipRowJSON struct {
 // turn into a multi-second request — the rest fill in on the next reload
 // once cached.
 const maxLiveGeoLookupsPerRequest = 15
+
+// boundedGeoLookup checks the cache first, then live-looks-up ip only while
+// *live is still under max, tracking whether the cache needs saving
+// afterward — shared by the IP table and the per-jail banned-IP list so
+// neither can turn a big table into a multi-second request.
+func boundedGeoLookup(cache map[string]geoInfo, ip string, live *int, max int, dirty *bool) geoInfo {
+	if g, cached := cache[ip]; cached && time.Since(g.LookedUpAt) < geoCacheTTL {
+		return g
+	}
+	if *live >= max {
+		return geoInfo{IP: ip}
+	}
+	*live++
+	if g, err := geoLookupCached(cache, ip); err == nil {
+		*dirty = true
+		return g
+	}
+	return geoInfo{IP: ip}
+}
 
 func (ws *webServer) handleSecurityIPs(w http.ResponseWriter, r *http.Request, _ *webSession) {
 	limit := 100
@@ -1375,15 +1513,8 @@ func (ws *webServer) handleSecurityIPs(w http.ResponseWriter, r *http.Request, _
 		if jail, isBanned := bannedBy[st.IP]; isBanned {
 			row.Banned, row.BannedJail = true, jail
 		}
-		if g, cached := geoCache[st.IP]; cached && time.Since(g.LookedUpAt) < geoCacheTTL {
-			row.Country, row.CountryCode, row.Local = g.Country, g.CountryCode, g.Local
-		} else if liveLookups < maxLiveGeoLookupsPerRequest {
-			liveLookups++
-			if g, err := geoLookupCached(geoCache, st.IP); err == nil {
-				row.Country, row.CountryCode, row.Local = g.Country, g.CountryCode, g.Local
-				geoDirty = true
-			}
-		}
+		g := boundedGeoLookup(geoCache, st.IP, &liveLookups, maxLiveGeoLookupsPerRequest, &geoDirty)
+		row.Country, row.CountryCode, row.City, row.ISP, row.Local = g.Country, g.CountryCode, g.City, g.ISP, g.Local
 		if a, cached := abuseCache[st.IP]; cached {
 			row.AbuseScore = a.Score
 		}
@@ -1430,6 +1561,247 @@ func (ws *webServer) handleAbuseIPDBSave(w http.ResponseWriter, r *http.Request,
 	}
 	writeJSON(w, map[string]any{
 		"ok": true, "configured": f2bAbuseIPDBConfigured(), "threshold": abuseThreshold(),
+	})
+}
+
+// ---------- routines (scheduled maintenance) ----------
+
+type routineJSON struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Enabled         bool   `json:"enabled"`
+	IntervalMinutes int    `json:"intervalMinutes"`
+	LastRun         string `json:"lastRun,omitempty"`
+	LastStatus      string `json:"lastStatus,omitempty"`
+}
+
+func (ws *webServer) handleRoutinesGet(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	cfg := ws.c.loadRoutineConfigs()
+	out := make([]routineJSON, 0, len(knownRoutines))
+	for _, t := range knownRoutines {
+		rc := cfg[t.ID]
+		rj := routineJSON{
+			ID: t.ID, Name: t.Name, Description: t.Description,
+			Enabled: rc.Enabled, IntervalMinutes: rc.IntervalMinutes, LastStatus: rc.LastStatus,
+		}
+		if !rc.LastRun.IsZero() {
+			rj.LastRun = rc.LastRun.Format(time.RFC3339)
+		}
+		out = append(out, rj)
+	}
+	writeJSON(w, map[string]any{"routines": out, "schedulerInstalled": routinesServiceInstalled()})
+}
+
+// handleRoutinesSave replaces the enabled/interval settings for every known
+// task in one call — the web UI always submits the whole panel's form, so
+// a full-replace keeps this simple instead of a partial-patch API.
+func (ws *webServer) handleRoutinesSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Routines []struct {
+			ID              string `json:"id"`
+			Enabled         bool   `json:"enabled"`
+			IntervalMinutes int    `json:"intervalMinutes"`
+		} `json:"routines"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	valid := map[string]bool{}
+	for _, t := range knownRoutines {
+		valid[t.ID] = true
+	}
+	cfg := ws.c.loadRoutineConfigs()
+	for _, in := range req.Routines {
+		if !valid[in.ID] {
+			continue
+		}
+		if in.IntervalMinutes < 0 || in.IntervalMinutes > 43200 {
+			httpErrJSON(w, http.StatusBadRequest, "interval must be 0-43200 minutes")
+			return
+		}
+		rc := cfg[in.ID]
+		rc.Enabled, rc.IntervalMinutes = in.Enabled, in.IntervalMinutes
+		cfg[in.ID] = rc
+	}
+	if err := ws.c.saveRoutineConfigs(cfg); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+var routineIDRe = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
+// handleRoutineRun streams one task's immediate run — a dynamic target, so
+// it can't live in the fixed simpleActions map the way f2b-setup etc. do.
+func (ws *webServer) handleRoutineRun(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if !routineIDRe.MatchString(req.ID) || routineArgs(req.ID) == nil {
+		httpErrJSON(w, http.StatusBadRequest, "unknown routine id")
+		return
+	}
+	ws.streamCommand(w, r, []string{"routines", "run", req.ID})
+}
+
+// ---------- webhooks ----------
+
+func (ws *webServer) handleWebhooksGet(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	writeJSON(w, map[string]any{"webhooks": ws.c.loadWebhooks(), "events": knownWebhookEvents})
+}
+
+func validWebhookEvents(events []string) bool {
+	known := map[string]bool{}
+	for _, e := range knownWebhookEvents {
+		known[e] = true
+	}
+	for _, e := range events {
+		if !known[e] {
+			return false
+		}
+	}
+	return true
+}
+
+func (ws *webServer) handleWebhookSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Name   string   `json:"name"`
+		URL    string   `json:"url"`
+		Type   string   `json:"type"`
+		Events []string `json:"events"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		httpErrJSON(w, http.StatusBadRequest, "name required")
+		return
+	}
+	u, err := url.Parse(req.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		httpErrJSON(w, http.StatusBadRequest, "bad webhook url")
+		return
+	}
+	if req.Type != "discord" {
+		req.Type = "generic"
+	}
+	if !validWebhookEvents(req.Events) {
+		httpErrJSON(w, http.StatusBadRequest, "unknown event in events list")
+		return
+	}
+	list := ws.c.loadWebhooks()
+	list = append(list, webhookConfig{ID: randomToken(), Name: req.Name, URL: req.URL, Type: req.Type, Events: req.Events})
+	if err := ws.c.saveWebhooks(list); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "webhooks": list})
+}
+
+func (ws *webServer) handleWebhookDelete(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	list := ws.c.loadWebhooks()
+	out := list[:0]
+	for _, wh := range list {
+		if wh.ID != req.ID {
+			out = append(out, wh)
+		}
+	}
+	if err := ws.c.saveWebhooks(out); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "webhooks": out})
+}
+
+func (ws *webServer) handleWebhookTest(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	for _, wh := range ws.c.loadWebhooks() {
+		if wh.ID == req.ID {
+			if err := deliverWebhook(wh, "test", map[string]any{"note": "test delivery from the revpro web UI"}); err != nil {
+				httpErrJSON(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+			return
+		}
+	}
+	httpErrJSON(w, http.StatusNotFound, "no such webhook")
+}
+
+// ---------- current (dashboard overview) ----------
+
+func (ws *webServer) handleCurrent(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	events, err := ws.c.recentAccessEvents(60)
+	if err != nil {
+		events = nil
+	}
+	ips, err := ws.c.ipAccessStats(10)
+	if err != nil {
+		ips = nil
+	}
+
+	bannedTotal := 0
+	jailCount := 0
+	if f2bAvailable() {
+		if names, err := f2bListJails(); err == nil {
+			jailCount = len(names)
+			for _, name := range names {
+				if js, err := f2bJailStatus(name); err == nil {
+					bannedTotal += js.CurrentBanned
+				}
+			}
+		}
+	}
+
+	sites, _ := ws.c.parseSites()
+	certsExpiringSoon := 0
+	if ws.c.certsSub != "" {
+		probe := &issuer{certsSub: ws.c.certsSub}
+		seen := map[string]bool{}
+		for _, s := range sites {
+			if seen[s.certName] {
+				continue
+			}
+			seen[s.certName] = true
+			if days, have := probe.daysUntilExpiry(s.certName); have && days < 30 {
+				certsExpiringSoon++
+			}
+		}
+	}
+
+	writeJSON(w, map[string]any{
+		"events": events,
+		"ips":    ips,
+		"stats": map[string]any{
+			"sites":             len(sites),
+			"jails":             jailCount,
+			"bannedTotal":       bannedTotal,
+			"certsExpiringSoon": certsExpiringSoon,
+			"f2bInstalled":      f2bAvailable(),
+		},
+		"perf": readPerfStats(ws.c.mainFolder),
 	})
 }
 

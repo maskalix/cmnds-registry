@@ -125,3 +125,81 @@ func isPrivateOrLoopback(ipStr string) bool {
 	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
+
+// accessEvent is one parsed access-log line, for the Current dashboard's
+// recent-activity feed — richer than ipStat, which only needs the IP+time.
+type accessEvent struct {
+	Site   string    `json:"site"`
+	IP     string    `json:"ip"`
+	Time   time.Time `json:"time"`
+	Method string    `json:"method,omitempty"`
+	Path   string    `json:"path,omitempty"`
+	Status int       `json:"status,omitempty"`
+}
+
+// parseAccessLineFull extracts IP, timestamp, request method/path, and
+// status from one combined-format line. Falls back gracefully — a missing
+// or malformed request/status section still yields the IP+time.
+func parseAccessLineFull(line, site string) (accessEvent, bool) {
+	ip, ts, ok := parseAccessLine(line)
+	if !ok {
+		return accessEvent{}, false
+	}
+	ev := accessEvent{Site: site, IP: ip, Time: ts}
+
+	i := strings.IndexByte(line, '"')
+	if i < 0 {
+		return ev, true
+	}
+	j := strings.IndexByte(line[i+1:], '"')
+	if j < 0 {
+		return ev, true
+	}
+	j += i + 1
+	if fields := strings.Fields(line[i+1 : j]); len(fields) >= 2 {
+		ev.Method, ev.Path = fields[0], fields[1]
+	}
+	if rest := strings.Fields(strings.TrimSpace(line[j+1:])); len(rest) >= 1 {
+		ev.Status = atoiSafe(rest[0])
+	}
+	return ev, true
+}
+
+// maxAccessEventsPerSite bounds how many trailing lines of any one site's
+// log feed the recent-activity view, for the same reason as
+// maxAccessLinesPerSite — one chatty site shouldn't drown out the rest or
+// slow down aggregation.
+const maxAccessEventsPerSite = 300
+
+// recentAccessEvents returns the `limit` most recent access-log events
+// across every site, newest first.
+func (c *proxyConfig) recentAccessEvents(limit int) ([]accessEvent, error) {
+	entries, err := os.ReadDir(c.logDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var all []accessEvent
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "_access.log") {
+			continue
+		}
+		site := strings.TrimSuffix(e.Name(), "_access.log")
+		lines, err := tailLines(filepath.Join(c.logDir, e.Name()), maxAccessEventsPerSite)
+		if err != nil {
+			continue
+		}
+		for _, line := range lines {
+			if ev, ok := parseAccessLineFull(line, site); ok {
+				all = append(all, ev)
+			}
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Time.After(all[j].Time) })
+	if limit > 0 && len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}

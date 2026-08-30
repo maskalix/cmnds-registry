@@ -113,3 +113,70 @@ func TestIsPrivateOrLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAccessLineFull(t *testing.T) {
+	line := `203.0.113.9 - - [30/Aug/2026:12:04:08 +0000] "GET /wp-login.php HTTP/2.0" 404 1234 "-" "sqlmap"`
+	ev, ok := parseAccessLineFull(line, "a.example.tld")
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if ev.Site != "a.example.tld" || ev.IP != "203.0.113.9" || ev.Method != "GET" || ev.Path != "/wp-login.php" || ev.Status != 404 {
+		t.Errorf("parsed = %+v", ev)
+	}
+}
+
+func TestParseAccessLineFullNoQuotedRequest(t *testing.T) {
+	// Still yields IP+time even without a well-formed "request" section.
+	line := `203.0.113.9 - - [30/Aug/2026:12:04:08 +0000] garbage`
+	ev, ok := parseAccessLineFull(line, "a.example.tld")
+	if !ok {
+		t.Fatal("expected ok=true")
+	}
+	if ev.IP != "203.0.113.9" || ev.Method != "" {
+		t.Errorf("parsed = %+v", ev)
+	}
+}
+
+func TestRecentAccessEventsSortedNewestFirst(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.example.tld_access.log",
+		`203.0.113.1 - - [30/Aug/2026:12:00:00 +0000] "GET / HTTP/2.0" 200 1 "-" "-"`+"\n")
+	write("b.example.tld_access.log",
+		`203.0.113.2 - - [30/Aug/2026:12:05:00 +0000] "GET / HTTP/2.0" 200 1 "-" "-"`+"\n")
+
+	c := &proxyConfig{logDir: dir}
+	events, err := c.recentAccessEvents(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].IP != "203.0.113.2" {
+		t.Errorf("expected the newer event first, got %+v", events[0])
+	}
+}
+
+func TestRecentAccessEventsRespectsLimit(t *testing.T) {
+	dir := t.TempDir()
+	body := ""
+	for i := 0; i < 5; i++ {
+		body += `203.0.113.` + string(rune('1'+i)) + ` - - [30/Aug/2026:12:0` + string(rune('0'+i)) + `:00 +0000] "GET / HTTP/2.0" 200 1 "-" "-"` + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s.example.tld_access.log"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &proxyConfig{logDir: dir}
+	events, err := c.recentAccessEvents(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected limit=2 to cap the result, got %d", len(events))
+	}
+}
