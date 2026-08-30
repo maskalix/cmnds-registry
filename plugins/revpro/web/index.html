@@ -396,6 +396,7 @@ pre.code .k{color:#8fc7a5}
         <p class="navgroup__label">Network</p>
         <div class="navlist">
           <button class="navlink" data-view="ports">Ports &amp; machines</button>
+          <button class="navlink" data-view="security">Security</button>
         </div>
       </div>
       <div class="navgroup">
@@ -701,6 +702,104 @@ pre.code .k{color:#8fc7a5}
         <div class="panel__body panel__body--flush tablewrap">
           <table id="machtable">
             <thead><tr><th>Machine</th><th>Ports (category)</th></tr></thead><tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <!-- ============================ SECURITY ============================ -->
+    <section class="view" id="view-security">
+      <div class="pagehead">
+        <p class="pagehead__kicker">network</p>
+        <h1 class="pagehead__title">Security</h1>
+        <p class="pagehead__lede">fail2ban jail status and controls, every visitor IP seen across this
+          box's access logs with geolocation, and AbuseIPDB reputation checks + reporting.</p>
+      </div>
+
+      <section class="panel" id="f2b-uninstalled-panel" style="display:none">
+        <header class="panel__head"><h3 class="panel__title">fail2ban</h3></header>
+        <div class="panel__body">
+          <p class="hint" style="margin-top:0">fail2ban isn't installed on this box yet. Setup installs the
+            package, writes <code>/etc/fail2ban/jail.local</code> with an <code>sshd</code> jail, nginx
+            botsearch/http-auth jails watching this install's logs, a long-bantime <code>recidive</code> jail
+            for repeat offenders, and a ban-only <code>revpro-manual</code> jail for one-off/guard-scan bans.
+            The ignoreip list is auto-detected from this box's own private network address(es), so it can't
+            lock out its own management traffic — and every bantime is finite, so even a wrong ignoreip
+            self-heals instead of a permanent lockout.</p>
+          <button class="btn btn--primary" data-run="f2b-setup">Set up fail2ban</button>
+        </div>
+      </section>
+
+      <section class="panel" id="f2b-jails-panel" style="display:none">
+        <header class="panel__head">
+          <h3 class="panel__title">fail2ban jails</h3>
+          <button class="btn btn--mini" data-run="f2b-setup">Re-run setup</button>
+        </header>
+        <div class="panel__body panel__body--flush tablewrap">
+          <table id="f2bjailstable">
+            <thead><tr>
+              <th>Jail</th><th>Banned</th><th>Failed</th><th>Banned IPs</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="panel__body">
+          <form id="f2bbanform" class="formgrid">
+            <div class="field">
+              <label for="f2b-ban-ip">IP address</label>
+              <input type="text" id="f2b-ban-ip" placeholder="203.0.113.9" required>
+            </div>
+            <div class="field">
+              <label for="f2b-ban-jail">Jail</label>
+              <select id="f2b-ban-jail"></select>
+            </div>
+            <div class="field" style="display:flex;align-items:end">
+              <button type="submit" class="btn">Ban</button>
+            </div>
+          </form>
+          <span class="savemsg" id="f2bban-msg"></span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">AbuseIPDB</h3></header>
+        <div class="panel__body">
+          <p class="hint" style="margin-top:0">Two directions: every fail2ban ban this box makes gets
+            <b>reported</b> to AbuseIPDB automatically once a key is set; the <b>Check &amp; block</b> button
+            below checks recent visitor IPs against AbuseIPDB's existing reputation data and bans (into
+            <code>revpro-manual</code>) anything at or above the threshold. Neither runs unattended — reporting
+            only fires from an actual local ban, and the check/block scan only runs when you click it.
+            Free key: <a href="https://www.abuseipdb.com/account/api" target="_blank" rel="noreferrer">abuseipdb.com/account/api</a>.</p>
+          <form id="abuseform" class="formgrid">
+            <div class="field">
+              <label for="abuse-key">API key <span class="dim" id="abuse-key-hint"></span></label>
+              <input type="text" id="abuse-key" placeholder="paste your AbuseIPDB API key" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="abuse-threshold">Block threshold (confidence score)</label>
+              <input type="number" id="abuse-threshold" min="1" max="100" placeholder="50">
+            </div>
+            <div class="full">
+              <button type="submit" class="btn btn--primary">Save</button>
+              <button type="button" class="btn" data-run="f2b-guard" id="abuse-guard-btn" disabled>Check &amp; block abusive IPs</button>
+            </div>
+          </form>
+          <span class="savemsg" id="abuse-msg"></span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head">
+          <h3 class="panel__title">IP access <span id="ipcount"></span></h3>
+          <button class="btn btn--mini" id="ip-refresh">Refresh</button>
+        </header>
+        <div class="panel__body panel__body--flush tablewrap">
+          <table id="iptable">
+            <thead><tr>
+              <th>IP</th><th>Location</th><th>Requests</th><th>Sites</th><th>Last seen</th>
+              <th>Abuse score</th><th>Status</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
           </table>
         </div>
       </section>
@@ -1981,6 +2080,199 @@ function renderPorts(){
   });
 }
 
+/* ---------- security: fail2ban + IP access + AbuseIPDB ---------- */
+
+// countryFlag turns an ISO 3166-1 alpha-2 code into its flag emoji by
+// mapping each letter onto a Unicode regional-indicator symbol — no image
+// assets or icon library needed.
+function countryFlag(code){
+  if (!code || code.length !== 2) return "";
+  const A = 0x1F1E6, base = "A".charCodeAt(0);
+  return String.fromCodePoint(A + code.toUpperCase().charCodeAt(0) - base,
+                               A + code.toUpperCase().charCodeAt(1) - base);
+}
+
+function abuseScoreChip(score){
+  if (score < 0) return chip("—", "");
+  if (score >= 75) return chip(score, "bad");
+  if (score >= 40) return chip(score, "warn");
+  return chip(score, "ok");
+}
+
+async function loadSecurity(){
+  try {
+    const f2b = await apiJSON("/api/security/f2b");
+    renderF2BPanel(f2b);
+  } catch(e){
+    $("#f2b-uninstalled-panel").style.display = "";
+    $("#f2b-jails-panel").style.display = "none";
+  }
+  loadIPTable();
+}
+
+function renderF2BPanel(f2b){
+  $("#f2b-uninstalled-panel").style.display = f2b.installed ? "none" : "";
+  $("#f2b-jails-panel").style.display = f2b.installed ? "" : "none";
+
+  $("#abuse-key-hint").textContent = f2b.abuseConfigured ? "(currently set)" : "(not set)";
+  $("#abuse-threshold").value = f2b.abuseThreshold || "";
+  $("#abuse-guard-btn").disabled = !(f2b.installed && f2b.abuseConfigured);
+  $("#abuse-guard-btn").title = !f2b.installed ? "Set up fail2ban first"
+    : !f2b.abuseConfigured ? "Save an AbuseIPDB API key first" : "";
+
+  if (!f2b.installed) return;
+
+  const tb = $("#f2bjailstable tbody"); tb.innerHTML = "";
+  const jailSelect = $("#f2b-ban-jail"); jailSelect.innerHTML = "";
+  (f2b.jails||[]).forEach(j => {
+    const o = document.createElement("option"); o.value = j.name; o.textContent = j.name;
+    jailSelect.appendChild(o);
+
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = j.name;
+    tr.appendChild(t1);
+    const t2 = document.createElement("td");
+    t2.appendChild(chip(j.currentBanned + " / " + j.totalBanned, j.currentBanned > 0 ? "warn" : ""));
+    tr.appendChild(t2);
+    const t3 = document.createElement("td"); t3.className = "dim";
+    t3.textContent = j.currentFailed + " / " + j.totalFailed;
+    tr.appendChild(t3);
+    const t4 = document.createElement("td");
+    (j.bannedIPs||[]).forEach(ip => {
+      const wrap = document.createElement("span");
+      wrap.style.marginRight = ".4rem"; wrap.style.display = "inline-flex"; wrap.style.alignItems = "center"; wrap.style.gap = ".2rem";
+      wrap.appendChild(chip(ip, "bad"));
+      const un = document.createElement("button");
+      un.className = "btn btn--mini"; un.textContent = "unban";
+      un.onclick = () => f2bUnbanIP(j.name, ip);
+      wrap.appendChild(un);
+      t4.appendChild(wrap);
+    });
+    if (!(j.bannedIPs||[]).length) t4.innerHTML = '<span class="dim">—</span>';
+    tr.appendChild(t4);
+    tb.appendChild(tr);
+  });
+  if (!(f2b.jails||[]).length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 4; td.className = "empty"; td.textContent = "No jails configured.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
+async function f2bUnbanIP(jail, ip){
+  try {
+    await apiJSON("/api/security/f2b/unban", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({Jail: jail, IP: ip})});
+    loadSecurity();
+  } catch(e){ alert(e.message); }
+}
+async function f2bBanIP(jail, ip){
+  try {
+    await apiJSON("/api/security/f2b/ban", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({Jail: jail, IP: ip})});
+    loadSecurity();
+  } catch(e){ alert(e.message); }
+}
+
+$("#f2bbanform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#f2bban-msg"); msg.textContent = ""; msg.className = "savemsg";
+  try {
+    await apiJSON("/api/security/f2b/ban", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({Jail: $("#f2b-ban-jail").value, IP: $("#f2b-ban-ip").value.trim()})});
+    $("#f2b-ban-ip").value = "";
+    msg.textContent = "Banned"; msg.classList.add("ok");
+    loadSecurity();
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+$("#abuseform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#abuse-msg"); msg.textContent = ""; msg.className = "savemsg";
+  try {
+    await apiJSON("/api/security/abuseipdb", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({key: $("#abuse-key").value.trim(), threshold: $("#abuse-threshold").value.trim()})});
+    $("#abuse-key").value = "";
+    msg.textContent = "Saved"; msg.classList.add("ok");
+    loadSecurity();
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+async function loadIPTable(){
+  try {
+    const d = await apiJSON("/api/security/ips?limit=150");
+    renderIPTable(d);
+  } catch(e){
+    $("#ipcount").textContent = "";
+    const tb = $("#iptable tbody"); tb.innerHTML = "";
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 8; td.className = "empty"; td.textContent = "✗ " + e.message;
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+$("#ip-refresh").addEventListener("click", loadIPTable);
+
+function renderIPTable(d){
+  const rows = d.ips || [];
+  $("#ipcount").textContent = "· " + rows.length;
+  const tb = $("#iptable tbody"); tb.innerHTML = "";
+  rows.forEach(row => {
+    const tr = document.createElement("tr");
+
+    const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = row.ip;
+    tr.appendChild(t1);
+
+    const t2 = document.createElement("td");
+    if (row.local) t2.innerHTML = '<span class="dim">LAN</span>';
+    else if (row.countryCode) t2.textContent = countryFlag(row.countryCode) + " " + (row.country || row.countryCode);
+    else t2.innerHTML = '<span class="dim">—</span>';
+    tr.appendChild(t2);
+
+    const t3 = document.createElement("td"); t3.className = "mono"; t3.textContent = row.requests;
+    tr.appendChild(t3);
+
+    const t4 = document.createElement("td"); t4.className = "dim"; t4.textContent = (row.sites||[]).join(", ");
+    tr.appendChild(t4);
+
+    const t5 = document.createElement("td"); t5.className = "dim";
+    t5.textContent = row.lastSeen ? timeAgo(row.lastSeen) : "—";
+    tr.appendChild(t5);
+
+    const t6 = document.createElement("td");
+    t6.appendChild(abuseScoreChip(row.abuseScore));
+    tr.appendChild(t6);
+
+    const t7 = document.createElement("td");
+    t7.appendChild(row.banned ? chip("banned (" + row.bannedJail + ")", "bad") : chip("clean", ""));
+    tr.appendChild(t7);
+
+    const t8 = document.createElement("td");
+    if (row.banned){
+      const un = document.createElement("button");
+      un.className = "btn btn--mini"; un.textContent = "unban";
+      un.onclick = () => f2bUnbanIP(row.bannedJail, row.ip);
+      t8.appendChild(un);
+    } else if (!row.local && d.f2bInstalled){
+      const b = document.createElement("button");
+      b.className = "btn btn--mini"; b.textContent = "ban";
+      b.onclick = () => f2bBanIP("revpro-manual", row.ip);
+      t8.appendChild(b);
+    }
+    tr.appendChild(t8);
+
+    tb.appendChild(tr);
+  });
+  if (!rows.length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 8; td.className = "empty"; td.textContent = "No traffic logged yet.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
+}
+
 /* ---------- onboarding checklist ---------- */
 function setupSteps(){
   const st = S.setup || {};
@@ -2056,6 +2348,7 @@ async function loadState(){
       const st = (S.sites||[]).find(s => s.fqdn === detailFqdn);
       if (st) renderSiteDetail(st);
     }
+    if ($("#view-security").classList.contains("is-active")) loadSecurity();
   } catch(e){
     consoleOpen(); consoleAppend("[error] state: " + e.message + "\n");
   }
@@ -2067,6 +2360,7 @@ function showView(name){
   $$(".view").forEach(v => v.classList.toggle("is-active", v.id === "view-" + name));
   if (name === "config") { loadConf("sites"); loadConf("ports"); loadConf("machines"); }
   if (name === "branding") { renderBrandForm(); }
+  if (name === "security") { loadSecurity(); }
   window.scrollTo({top:0});
 }
 $("#nav").addEventListener("click", e => {
@@ -2079,6 +2373,10 @@ $("#nav").addEventListener("click", e => {
 $("#actions").addEventListener("click", e => {
   const b = e.target.closest("button[data-run]"); if (!b) return;
   if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+  stream("/api/run", {action: b.dataset.run}, b.dataset.run);
+});
+$("#view-security").addEventListener("click", e => {
+  const b = e.target.closest("button[data-run]"); if (!b || b.disabled) return;
   stream("/api/run", {action: b.dataset.run}, b.dataset.run);
 });
 

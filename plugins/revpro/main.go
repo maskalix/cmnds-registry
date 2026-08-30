@@ -91,6 +91,8 @@ func main() {
 		mustConfig().webCmd(os.Args[2:])
 	case "redirect":
 		mustConfig().redirectCmd(os.Args[2:])
+	case "fail2ban":
+		mustConfig().fail2banCmd(os.Args[2:])
 	case "cert":
 		certInspect(os.Args[2:])
 	case "certgen":

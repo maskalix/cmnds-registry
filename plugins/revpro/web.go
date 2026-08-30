@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -124,6 +126,11 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/ports/suggest", ws.auth.requireSession(ws.handlePortSuggest))
 	mux.HandleFunc("GET /api/ports/check", ws.auth.requireSession(ws.handlePortCheck))
 	mux.HandleFunc("GET /api/security-check", ws.auth.requireSession(ws.handleSecurityCheck))
+	mux.HandleFunc("GET /api/security/f2b", ws.auth.requireSession(ws.handleF2BStatus))
+	mux.HandleFunc("POST /api/security/f2b/ban", ws.auth.requireSession(ws.handleF2BBan))
+	mux.HandleFunc("POST /api/security/f2b/unban", ws.auth.requireSession(ws.handleF2BUnban))
+	mux.HandleFunc("GET /api/security/ips", ws.auth.requireSession(ws.handleSecurityIPs))
+	mux.HandleFunc("POST /api/security/abuseipdb", ws.auth.requireSession(ws.handleAbuseIPDBSave))
 	mux.HandleFunc("POST /api/brand", ws.auth.requireSession(ws.handleBrandSave))
 	mux.HandleFunc("POST /api/brand/logo", ws.auth.requireSession(ws.handleBrandLogoUpload))
 	mux.HandleFunc("POST /api/brand/logo/remove", ws.auth.requireSession(ws.handleBrandLogoRemove))
@@ -528,6 +535,8 @@ var simpleActions = map[string][]string{
 	"compose":          {"compose"},
 	"renew":            {"renew"},
 	"list":             {"list"},
+	"f2b-setup":        {"fail2ban", "setup"},
+	"f2b-guard":        {"fail2ban", "guard"},
 }
 
 func (ws *webServer) handleRun(w http.ResponseWriter, r *http.Request, _ *webSession) {
@@ -1237,6 +1246,191 @@ func (ws *webServer) handleSecurityCheck(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeJSON(w, runSecurityCheck(target))
+}
+
+// ---------- fail2ban ----------
+
+var jailNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+func (ws *webServer) handleF2BStatus(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	if !f2bAvailable() {
+		writeJSON(w, map[string]any{
+			"installed": false, "abuseConfigured": f2bAbuseIPDBConfigured(), "abuseThreshold": abuseThreshold(),
+		})
+		return
+	}
+	names, err := f2bListJails()
+	if err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jails := make([]f2bJail, 0, len(names))
+	for _, name := range names {
+		if js, err := f2bJailStatus(name); err == nil {
+			jails = append(jails, js)
+		}
+	}
+	writeJSON(w, map[string]any{
+		"installed": true, "jails": jails,
+		"abuseConfigured": f2bAbuseIPDBConfigured(), "abuseThreshold": abuseThreshold(),
+	})
+}
+
+func f2bBanRequest(w http.ResponseWriter, r *http.Request) (jail, ip string, err error) {
+	var req struct{ Jail, IP string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
+		return "", "", fmt.Errorf("bad request body")
+	}
+	if !jailNameRe.MatchString(req.Jail) {
+		return "", "", fmt.Errorf("bad jail name")
+	}
+	if net.ParseIP(req.IP) == nil {
+		return "", "", fmt.Errorf("bad IP address")
+	}
+	return req.Jail, req.IP, nil
+}
+
+func (ws *webServer) handleF2BBan(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	jail, ip, err := f2bBanRequest(w, r)
+	if err != nil {
+		httpErrJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := f2bBan(jail, ip); err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (ws *webServer) handleF2BUnban(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	jail, ip, err := f2bBanRequest(w, r)
+	if err != nil {
+		httpErrJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := f2bUnban(jail, ip); err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- IP access table (traffic + geo + AbuseIPDB, cache-only) ----------
+
+type ipRowJSON struct {
+	IP          string   `json:"ip"`
+	Requests    int      `json:"requests"`
+	Sites       []string `json:"sites"`
+	LastSeen    string   `json:"lastSeen,omitempty"`
+	Country     string   `json:"country,omitempty"`
+	CountryCode string   `json:"countryCode,omitempty"`
+	Local       bool     `json:"local"`
+	AbuseScore  int      `json:"abuseScore"` // -1 = not checked yet
+	Banned      bool     `json:"banned"`
+	BannedJail  string   `json:"bannedJail,omitempty"`
+}
+
+// maxLiveGeoLookupsPerRequest bounds how many *uncached* geo lookups one
+// page load will wait on, so a table full of never-before-seen IPs can't
+// turn into a multi-second request — the rest fill in on the next reload
+// once cached.
+const maxLiveGeoLookupsPerRequest = 15
+
+func (ws *webServer) handleSecurityIPs(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	limit := 100
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 500 {
+		limit = n
+	}
+	stats, err := ws.c.ipAccessStats(limit)
+	if err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	bannedBy := map[string]string{}
+	if f2bAvailable() {
+		if jails, err := f2bListJails(); err == nil {
+			for _, name := range jails {
+				if js, err := f2bJailStatus(name); err == nil {
+					for _, ip := range js.BannedIPs {
+						bannedBy[ip] = name
+					}
+				}
+			}
+		}
+	}
+
+	geoCache := ws.c.loadGeoCache()
+	abuseCache := ws.c.loadAbuseCache()
+	liveLookups := 0
+	geoDirty := false
+
+	out := make([]ipRowJSON, 0, len(stats))
+	for _, st := range stats {
+		row := ipRowJSON{IP: st.IP, Requests: st.Requests, Sites: st.Sites, AbuseScore: -1}
+		if !st.LastSeen.IsZero() {
+			row.LastSeen = st.LastSeen.Format(time.RFC3339)
+		}
+		if jail, isBanned := bannedBy[st.IP]; isBanned {
+			row.Banned, row.BannedJail = true, jail
+		}
+		if g, cached := geoCache[st.IP]; cached && time.Since(g.LookedUpAt) < geoCacheTTL {
+			row.Country, row.CountryCode, row.Local = g.Country, g.CountryCode, g.Local
+		} else if liveLookups < maxLiveGeoLookupsPerRequest {
+			liveLookups++
+			if g, err := geoLookupCached(geoCache, st.IP); err == nil {
+				row.Country, row.CountryCode, row.Local = g.Country, g.CountryCode, g.Local
+				geoDirty = true
+			}
+		}
+		if a, cached := abuseCache[st.IP]; cached {
+			row.AbuseScore = a.Score
+		}
+		out = append(out, row)
+	}
+	if geoDirty {
+		_ = ws.c.saveGeoCache(geoCache)
+	}
+	writeJSON(w, map[string]any{
+		"ips": out, "f2bInstalled": f2bAvailable(), "abuseConfigured": f2bAbuseIPDBConfigured(),
+	})
+}
+
+// ---------- AbuseIPDB settings ----------
+
+// handleAbuseIPDBSave persists the API key and confidence threshold. The
+// key is write-only end to end (never read back into a JSON response) —
+// same convention as handleWedosSave's password.
+func (ws *webServer) handleAbuseIPDBSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Key       string `json:"key"`
+		Threshold string `json:"threshold"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if req.Key != "" {
+		if err := configWrite("REVPRO_ABUSEIPDB_KEY", strings.TrimSpace(req.Key)); err != nil {
+			httpErrJSON(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if req.Threshold != "" {
+		n, err := strconv.Atoi(req.Threshold)
+		if err != nil || n < 1 || n > 100 {
+			httpErrJSON(w, http.StatusBadRequest, "threshold must be 1-100")
+			return
+		}
+		if err := configWrite("REVPRO_ABUSEIPDB_THRESHOLD", req.Threshold); err != nil {
+			httpErrJSON(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "configured": f2bAbuseIPDBConfigured(), "threshold": abuseThreshold(),
+	})
 }
 
 // ---------- small helpers ----------
