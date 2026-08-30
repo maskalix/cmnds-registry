@@ -155,6 +155,13 @@ a:hover{text-decoration:underline}
 .chip--bad{border-color:var(--bad);color:var(--bad)}
 .chip--tag{cursor:default;background:var(--surface-2)}
 
+/* ── Icon chips — square, letter-only badges for flags/cert-type. Letters
+   mirror the sites.conf flag tokens themselves (a/s/w/l) so the table stays
+   legible without spelling each one out. ── */
+.chip--icon{width:1.5rem;height:1.35rem;padding:0;justify-content:center;font-size:.7rem;
+  margin:0 .25rem .2rem 0;cursor:default}
+a.chip--icon{text-decoration:none}
+
 /* ── Tables ── */
 .tablewrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse}
@@ -175,6 +182,44 @@ td .sitename{display:block;font-weight:600;color:var(--fg)}
 td .grouplabel{display:block;color:var(--fg-3);font-size:.7rem;margin-top:.15rem}
 .rowtags{margin-top:.3rem}
 .rownote{cursor:help}
+
+/* ── Site link + group link (clickable domain / group cells) ── */
+.sitelink{background:none;border:none;padding:0;font:inherit;font-weight:600;color:var(--fg);
+  cursor:pointer;text-align:left}
+.sitelink:hover{color:var(--a);text-decoration:underline}
+.extlink{margin-left:.35rem;color:var(--fg-3);font-size:.75rem}
+.extlink:hover{color:var(--a)}
+.grouplink{background:none;border:none;padding:0;font:inherit;color:var(--fg);cursor:pointer;text-align:left}
+.grouplink:hover{color:var(--a);text-decoration:underline}
+
+/* ── Certificate cell — stacked days-left/name label + a type icon ── */
+.certcell{display:flex;align-items:center;gap:.5rem}
+.certcell__text{min-width:0}
+.certcell__name{font-family:var(--font-mono);font-size:.7rem;color:var(--fg-3);
+  margin-top:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:14rem}
+
+/* ── Filter bar (Sites view scoped to one group) ── */
+.filterbar{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.6rem .9rem;
+  margin-bottom:1rem;border:1px solid var(--a);background:color-mix(in srgb,var(--a) 8%,transparent)}
+.filterbar__text{font-size:.8125rem}
+.filterbar__text b{color:var(--a)}
+
+/* ── Site detail view ── */
+.detailhead{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:.6rem}
+.backlink{background:none;border:none;padding:0;font-family:var(--font-mono);font-size:.7rem;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--fg-3);cursor:pointer;margin-bottom:.9rem}
+.backlink:hover{color:var(--a)}
+.detailgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0}
+.detailgrid .dl{padding:.85rem 1.1rem;border-bottom:1px solid var(--line-soft);border-right:1px solid var(--line-soft)}
+.detailgrid .dl:nth-last-child(-n+2){border-bottom:none}
+.detailgrid .dl dt{font-family:var(--font-mono);font-size:.625rem;text-transform:uppercase;
+  letter-spacing:.14em;color:var(--fg-3);margin-bottom:.3rem}
+.detailgrid .dl dd{font-size:.9rem}
+.logtabs{display:flex;gap:.4rem;margin-bottom:.7rem}
+.logtabs .btn.is-active{background:var(--fg);color:var(--bg)}
+pre.logview{max-height:22rem;overflow:auto;margin:0;padding:.85rem 1rem;background:var(--code-bg);
+  color:var(--code-fg);font-family:var(--font-mono);font-size:.72rem;line-height:1.55;white-space:pre-wrap;
+  word-break:break-all}
 
 /* ── Modal ── */
 .modal{position:fixed;inset:0;z-index:130;display:none}
@@ -415,12 +460,16 @@ pre.code .k{color:#8fc7a5}
         <header class="panel__head">
           <h3 class="panel__title">Configured sites <span id="sitecount"></span></h3>
         </header>
+        <div class="panel__body panel__body--flush">
+          <div id="sitefilterbar"></div>
+        </div>
         <div class="panel__body panel__body--flush tablewrap">
           <table id="sitestable">
             <thead><tr>
               <th data-sort="fqdn">Site <span class="sortarrow"></span></th>
               <th data-sort="group">Group <span class="sortarrow"></span></th>
-              <th data-sort="target">Target <span class="sortarrow"></span></th>
+              <th data-sort="machine">Machine <span class="sortarrow"></span></th>
+              <th data-sort="port">Port <span class="sortarrow"></span></th>
               <th data-sort="flags">Flags <span class="sortarrow"></span></th>
               <th data-sort="cert">Certificate <span class="sortarrow"></span></th>
               <th></th>
@@ -553,6 +602,43 @@ pre.code .k{color:#8fc7a5}
           <span class="savemsg" id="groupadd-msg"></span>
         </div>
       </form>
+    </section>
+
+    <!-- ============================ SITE DETAIL ============================ -->
+    <section class="view" id="view-site-detail">
+      <button type="button" class="backlink" id="detail-back">&larr; Back to sites</button>
+      <div class="pagehead">
+        <div class="detailhead">
+          <div>
+            <p class="pagehead__kicker" id="detail-group">reverse proxy</p>
+            <h1 class="pagehead__title" id="detail-fqdn">—</h1>
+          </div>
+          <div class="toolbar">
+            <a class="btn btn--mini" id="detail-open" href="#" target="_blank" rel="noreferrer">Open site ↗</a>
+            <button class="btn btn--mini" id="detail-analyze">Analyze</button>
+            <button class="btn btn--mini" id="detail-issue">Issue cert</button>
+            <button class="btn btn--mini" id="detail-editmeta">Edit name/tags</button>
+            <button class="btn btn--mini" id="detail-editconf">Edit config</button>
+          </div>
+        </div>
+      </div>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Info</h3></header>
+        <dl class="detailgrid" id="detail-grid"></dl>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Logs</h3></header>
+        <div class="panel__body">
+          <div class="logtabs">
+            <button class="btn btn--mini is-active" data-log="access">Access</button>
+            <button class="btn btn--mini" data-log="error">Error</button>
+            <button class="btn btn--mini" id="detail-logs-refresh" style="margin-left:auto">Refresh</button>
+          </div>
+          <pre class="logview" id="detail-logview">Loading…</pre>
+        </div>
+      </section>
     </section>
 
     <!-- ============================ PORTS ============================ -->
@@ -1098,6 +1184,25 @@ docker compose up -d reverseproxy   <span class="c"># 3. certs exist → nginx s
   </div>
 </div>
 
+<div class="modal" id="confmodal" role="dialog" aria-modal="true">
+  <div class="modal__overlay" id="confmodal-overlay"></div>
+  <div class="modal__box" style="max-width:44rem">
+    <h2 class="modal__title">Edit config</h2>
+    <p class="modal__sub mono" id="confmodal-fqdn"></p>
+    <p class="hint" id="confmodal-hint" style="margin-top:0;margin-bottom:.8rem">
+      This is the actual nginx server block revpro generated for this site. Editing and saving here
+      <b>moves the site to a manual config</b> (<span class="filepath">manconf/</span>) — its line is removed
+      from <span class="filepath">sites.conf</span> and revpro will never overwrite this file again.
+    </p>
+    <textarea id="confmodal-content" class="conf" rows="20" spellcheck="false"></textarea>
+    <div class="modal__actions">
+      <button class="btn" id="confmodal-cancel">Cancel</button>
+      <button class="btn btn--primary" id="confmodal-save">Save as manual config</button>
+    </div>
+    <span class="savemsg" id="confmodal-msg"></span>
+  </div>
+</div>
+
 <script>
 "use strict";
 let S = {csrf:"", user:"", sites:[], categories:[], machines:{}, groups:[], slugs:[], setup:{}};
@@ -1183,23 +1288,74 @@ function chip(text, cls){
   b.textContent = text;
   return b;
 }
+// iconChip renders a small square badge (letter or 2-char code) as a
+// colored "icon" — flag tokens (a/s/w/l) and cert-challenge types (H1/D1)
+// both read this way so the sites table stays compact without losing the
+// meaning a full word chip carried.
+function iconChip(letter, cls, title){
+  const c = chip(letter, cls);
+  c.classList.add("chip--icon");
+  c.title = title;
+  c.setAttribute("aria-label", title);
+  return c;
+}
 function certChip(days){
   if (days === -2) return chip("cert ?", "");
   if (days === -1) return chip("missing", "bad");
   if (days < 30)   return chip(days + "d left", "warn");
   return chip(days + "d left", "ok");
 }
+function certTypeChip(st){
+  return st.certType === "dns01"
+    ? iconChip("D1", "accent", "DNS-01 challenge (wildcard, via WEDOS)")
+    : iconChip("H1", "", "HTTP-01 challenge (ACME webroot)");
+}
+function escapeHtml(s){
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : s;
+  return d.innerHTML;
+}
 
 let siteSort = {key:"fqdn", dir:1};
+// siteGroupFilter scopes the sites table to one ==domain block — set from
+// the Groups view ("N sites →") or by clicking a group cell in this table.
+let siteGroupFilter = null; // {domain, index, label}
+
+function setSiteGroupFilter(g){
+  siteGroupFilter = g ? {domain: g.domain, index: g.index, label: g.label || g.domain} : null;
+  renderSites();
+}
+
+function renderSiteFilterBar(){
+  const bar = $("#sitefilterbar");
+  bar.innerHTML = "";
+  if (!siteGroupFilter) return;
+  const wrap = document.createElement("div");
+  wrap.className = "filterbar";
+  const text = document.createElement("span");
+  text.className = "filterbar__text";
+  text.innerHTML = "Showing sites in <b>" + escapeHtml(siteGroupFilter.label) + "</b>";
+  wrap.appendChild(text);
+  const clear = document.createElement("button");
+  clear.className = "btn btn--mini";
+  clear.textContent = "Show all sites";
+  clear.onclick = () => setSiteGroupFilter(null);
+  wrap.appendChild(clear);
+  bar.appendChild(wrap);
+}
 
 function sortedSites(){
-  const list = (S.sites||[]).slice();
+  let list = (S.sites||[]).slice();
+  if (siteGroupFilter){
+    list = list.filter(st => st.group === siteGroupFilter.domain && st.groupIndex === siteGroupFilter.index);
+  }
   const {key, dir} = siteSort;
   const flagKey = st => [st.auth?"a":"",st.https?"s":"",st.www?"w":"",st.local?"l":""].join("");
   const val = st => {
     switch(key){
       case "group":  return (st.group||"") + "" + String(st.groupIndex||0).padStart(6,"0");
-      case "target": return st.target||"";
+      case "machine": return st.machine||"";
+      case "port":    return String(st.port||"").padStart(5,"0");
       case "flags":  return flagKey(st);
       case "cert":   return st.cert||"";
       default:       return st.fqdn||"";
@@ -1229,14 +1385,16 @@ function renderSites(){
   tb.innerHTML = "";
   $("#siteserr").innerHTML = "";
   updateSortIndicators();
+  renderSiteFilterBar();
   if (S.sitesError){
     const d = document.createElement("div");
     d.className = "error-box";
     d.textContent = "sites.conf problem: " + S.sitesError + "\nFix it under Config files.";
     $("#siteserr").appendChild(d);
   }
-  $("#sitecount").textContent = "· " + (S.sites||[]).length;
-  sortedSites().forEach(st => {
+  const shown = sortedSites();
+  $("#sitecount").textContent = "· " + shown.length + (siteGroupFilter ? " of " + (S.sites||[]).length : "");
+  shown.forEach(st => {
     const tr = document.createElement("tr");
 
     const td1 = document.createElement("td"); td1.className = "mono";
@@ -1245,11 +1403,16 @@ function renderSites(){
       nm.className = "sitename"; nm.textContent = st.name;
       td1.appendChild(nm);
     }
-    const a = document.createElement("a");
-    a.href = "https://" + st.fqdn; a.target = "_blank"; a.rel = "noreferrer";
+    const a = document.createElement("button");
+    a.type = "button";
+    a.className = "sitelink" + (st.name ? " dim" : "");
     a.textContent = st.fqdn;
-    if (st.name) a.className = "dim";
+    a.onclick = () => openSiteDetail(st.fqdn);
     td1.appendChild(a);
+    const ext = document.createElement("a");
+    ext.className = "extlink"; ext.href = "https://" + st.fqdn; ext.target = "_blank"; ext.rel = "noreferrer";
+    ext.title = "Open the live site"; ext.textContent = "↗";
+    td1.appendChild(ext);
     if (st.note){
       const noteMark = document.createElement("span");
       noteMark.className = "rownote"; noteMark.title = st.note;
@@ -1265,40 +1428,49 @@ function renderSites(){
     tr.appendChild(td1);
 
     const tdg = document.createElement("td");
-    const gm = document.createElement("span"); gm.className = "mono"; gm.textContent = st.group || "";
-    tdg.appendChild(gm);
+    const groupRef = {domain: st.group, index: st.groupIndex, label: st.groupLabel || st.group};
     if (st.groupLabel){
-      const gl = document.createElement("span");
-      gl.className = "grouplabel"; gl.textContent = st.groupLabel;
+      const gl = document.createElement("button");
+      gl.type = "button"; gl.className = "grouplink"; gl.textContent = st.groupLabel;
+      gl.style.fontWeight = "600";
+      gl.onclick = () => setSiteGroupFilter(groupRef);
+      tdg.appendChild(gl);
+      const gm = document.createElement("span");
+      gm.className = "grouplabel mono"; gm.textContent = st.group || "";
+      tdg.appendChild(gm);
+    } else {
+      const gl = document.createElement("button");
+      gl.type = "button"; gl.className = "grouplink mono"; gl.textContent = st.group || "";
+      gl.onclick = () => setSiteGroupFilter(groupRef);
       tdg.appendChild(gl);
     }
     tr.appendChild(tdg);
 
-    const td2 = document.createElement("td"); td2.className = "mono";
-    if (st.rawTarget){
-      td2.textContent = st.rawTarget;
-      const rs = document.createElement("span");
-      rs.className = "dim";
-      rs.textContent = " = " + st.target;
-      td2.appendChild(rs);
-    } else {
-      td2.textContent = st.target;
-    }
-    tr.appendChild(td2);
+    const tdMachine = document.createElement("td"); tdMachine.className = "mono";
+    tdMachine.textContent = st.machine || "";
+    tr.appendChild(tdMachine);
+
+    const tdPort = document.createElement("td"); tdPort.className = "mono";
+    tdPort.textContent = st.port || "";
+    tr.appendChild(tdPort);
 
     const td3 = document.createElement("td");
-    if (st.auth)  td3.appendChild(chip("auth","accent"));
-    if (st.https) td3.appendChild(chip("https","ok"));
-    if (st.www)   td3.appendChild(chip("www",""));
-    if (st.local) td3.appendChild(chip("local","warn"));
+    if (st.auth)  td3.appendChild(iconChip("A","accent","Auth proxy (Authentik)"));
+    if (st.https) td3.appendChild(iconChip("S","ok","Upstream over HTTPS"));
+    if (st.www)   td3.appendChild(iconChip("W","","Also serves www"));
+    if (st.local) td3.appendChild(iconChip("L","warn","Local-only"));
     tr.appendChild(td3);
 
-    const td4 = document.createElement("td"); td4.className = "mono";
-    td4.appendChild(certChip(st.certDays));
-    const cn = document.createElement("span");
-    cn.className = "dim";
-    cn.textContent = " " + st.cert;
-    td4.appendChild(cn);
+    const td4 = document.createElement("td");
+    const certWrap = document.createElement("div"); certWrap.className = "certcell";
+    const certText = document.createElement("div"); certText.className = "certcell__text";
+    certText.appendChild(certChip(st.certDays));
+    const cn = document.createElement("div");
+    cn.className = "certcell__name"; cn.textContent = st.cert; cn.title = st.cert;
+    certText.appendChild(cn);
+    certWrap.appendChild(certText);
+    certWrap.appendChild(certTypeChip(st));
+    td4.appendChild(certWrap);
     tr.appendChild(td4);
 
     const td5 = document.createElement("td");
@@ -1313,15 +1485,20 @@ function renderSites(){
     const b3 = document.createElement("button"); b3.className = "btn btn--mini"; b3.textContent = "edit";
     b3.onclick = () => openSiteMeta(st.fqdn);
     td5.appendChild(b3);
+    td5.appendChild(document.createTextNode(" "));
+    const b4 = document.createElement("button"); b4.className = "btn btn--mini"; b4.textContent = "config";
+    b4.onclick = () => openSiteConfig(st.fqdn);
+    td5.appendChild(b4);
     tr.appendChild(td5);
 
     tb.appendChild(tr);
   });
-  if (!(S.sites||[]).length && !S.sitesError){
+  if (!shown.length && !S.sitesError){
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 6; td.className = "empty";
-    td.textContent = "No sites yet — add your first one under Add site.";
+    td.colSpan = 7; td.className = "empty";
+    td.textContent = siteGroupFilter ? "No sites in this group."
+      : "No sites yet — add your first one under Add site.";
     tr.appendChild(td); tb.appendChild(tr);
   }
 
@@ -1380,6 +1557,133 @@ $("#sitemeta-save").addEventListener("click", async () => {
   }
 });
 
+/* ---------- full config editor (view + move to manual config) ---------- */
+let confFqdn = null;
+
+async function openSiteConfig(fqdn){
+  confFqdn = fqdn;
+  $("#confmodal-fqdn").textContent = fqdn;
+  $("#confmodal-content").value = "loading…";
+  $("#confmodal-msg").textContent = ""; $("#confmodal-msg").className = "savemsg";
+  $("#confmodal").classList.add("is-on");
+  try {
+    const d = await apiJSON("/api/sites/config?domain=" + encodeURIComponent(fqdn));
+    $("#confmodal-content").value = d.content;
+  } catch(e){
+    $("#confmodal-content").value = "";
+    $("#confmodal-msg").textContent = e.message; $("#confmodal-msg").className = "savemsg bad";
+  }
+}
+function closeSiteConfig(){
+  $("#confmodal").classList.remove("is-on");
+  confFqdn = null;
+}
+$("#confmodal-overlay").addEventListener("click", closeSiteConfig);
+$("#confmodal-cancel").addEventListener("click", closeSiteConfig);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && $("#confmodal").classList.contains("is-on")) closeSiteConfig();
+});
+$("#confmodal-save").addEventListener("click", async () => {
+  if (!confFqdn) return;
+  const msg = $("#confmodal-msg");
+  msg.textContent = ""; msg.className = "savemsg";
+  if (!confirm("Move " + confFqdn + " to a manual config? It will be removed from sites.conf and revpro will no longer regenerate it.")) return;
+  try {
+    const d = await apiJSON("/api/sites/manualize", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({domain: confFqdn, content: $("#confmodal-content").value})});
+    await loadState();
+    closeSiteConfig();
+    consoleOpen();
+    consoleAppend((($("#console").textContent) ? "\n" : "") + "✓ " + d.message + "\n");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+/* ---------- site detail view ---------- */
+let detailFqdn = null;
+let detailLogWhich = "access";
+
+function dl(dt, ddNode){
+  const wrap = document.createElement("div"); wrap.className = "dl";
+  const dtEl = document.createElement("dt"); dtEl.textContent = dt;
+  const ddEl = document.createElement("dd");
+  if (typeof ddNode === "string") ddEl.textContent = ddNode;
+  else if (ddNode) ddEl.appendChild(ddNode);
+  else ddEl.textContent = "—";
+  wrap.appendChild(dtEl); wrap.appendChild(ddEl);
+  return wrap;
+}
+function flagRow(st){
+  const wrap = document.createElement("span");
+  if (st.auth)  wrap.appendChild(iconChip("A","accent","Auth proxy (Authentik)"));
+  if (st.https) wrap.appendChild(iconChip("S","ok","Upstream over HTTPS"));
+  if (st.www)   wrap.appendChild(iconChip("W","","Also serves www"));
+  if (st.local) wrap.appendChild(iconChip("L","warn","Local-only"));
+  if (!st.auth && !st.https && !st.www && !st.local) wrap.textContent = "none";
+  return wrap;
+}
+
+function openSiteDetail(fqdn){
+  const st = (S.sites||[]).find(s => s.fqdn === fqdn);
+  if (!st) return;
+  detailFqdn = fqdn;
+  renderSiteDetail(st);
+  showView("site-detail");
+  loadSiteDetailLogs();
+}
+
+function renderSiteDetail(st){
+  $("#detail-fqdn").textContent = st.name ? st.name + " — " + st.fqdn : st.fqdn;
+  $("#detail-group").textContent = "reverse proxy · " + (st.groupLabel || st.group);
+  $("#detail-open").href = "https://" + st.fqdn;
+
+  const grid = $("#detail-grid");
+  grid.innerHTML = "";
+  grid.appendChild(dl("Group", st.groupLabel ? (st.groupLabel + " (" + st.group + ")") : st.group));
+  grid.appendChild(dl("Machine", st.machine || "—"));
+  grid.appendChild(dl("Port", st.port || "—"));
+  grid.appendChild(dl("Upstream", st.target));
+  const certNode = document.createElement("span");
+  certNode.appendChild(certChip(st.certDays));
+  certNode.appendChild(document.createTextNode(" " + st.cert + " "));
+  certNode.appendChild(certTypeChip(st));
+  grid.appendChild(dl("Certificate", certNode));
+  grid.appendChild(dl("Flags", flagRow(st)));
+  grid.appendChild(dl("Tags", (st.tags||[]).length ? (st.tags||[]).join(", ") : "—"));
+  grid.appendChild(dl("Note", st.note || "—"));
+}
+
+$("#detail-back").addEventListener("click", () => showView("sites"));
+$("#detail-analyze").addEventListener("click", () => {
+  if (detailFqdn) stream("/api/run", {action:"analyze", targets:[detailFqdn]}, "analyze " + detailFqdn);
+});
+$("#detail-issue").addEventListener("click", () => {
+  const st = (S.sites||[]).find(s => s.fqdn === detailFqdn);
+  if (st) stream("/api/run", {action:"issue", targets:[st.cert]}, "issue " + st.cert);
+});
+$("#detail-editmeta").addEventListener("click", () => { if (detailFqdn) openSiteMeta(detailFqdn); });
+$("#detail-editconf").addEventListener("click", () => { if (detailFqdn) openSiteConfig(detailFqdn); });
+
+async function loadSiteDetailLogs(){
+  const view = $("#detail-logview");
+  view.textContent = "Loading…";
+  try {
+    const d = await apiJSON("/api/sites/logs?domain=" + encodeURIComponent(detailFqdn) + "&which=" + detailLogWhich);
+    view.textContent = (d.lines && d.lines.length) ? d.lines.join("\n") : "(empty)";
+  } catch(e){
+    view.textContent = "✗ " + e.message;
+  }
+}
+$$(".logtabs [data-log]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    detailLogWhich = btn.dataset.log;
+    $$(".logtabs [data-log]").forEach(b => b.classList.toggle("is-active", b === btn));
+    loadSiteDetailLogs();
+  });
+});
+$("#detail-logs-refresh").addEventListener("click", loadSiteDetailLogs);
+
 /* ---------- groups ---------- */
 function renderGroups(){
   const tb = $("#groupstable tbody");
@@ -1395,7 +1699,12 @@ function renderGroups(){
     }
     const tr = document.createElement("tr");
 
-    const td1 = document.createElement("td"); td1.className = "mono"; td1.textContent = g.domain;
+    const td1 = document.createElement("td");
+    const domainBtn = document.createElement("button");
+    domainBtn.type = "button"; domainBtn.className = "grouplink mono"; domainBtn.textContent = g.domain;
+    domainBtn.title = "View this group's sites";
+    domainBtn.onclick = () => { setSiteGroupFilter(g); showView("sites"); };
+    td1.appendChild(domainBtn);
     tr.appendChild(td1);
 
     const td2 = document.createElement("td"); td2.textContent = g.label || "";
@@ -1408,13 +1717,22 @@ function renderGroups(){
     tr.appendChild(td4);
 
     const td5 = document.createElement("td");
-    if (g.auth)  td5.appendChild(chip("auth","accent"));
-    if (g.https) td5.appendChild(chip("https","ok"));
-    if (g.www)   td5.appendChild(chip("www",""));
-    if (g.local) td5.appendChild(chip("local","warn"));
+    if (g.auth)  td5.appendChild(iconChip("A","accent","Auth proxy (Authentik)"));
+    if (g.https) td5.appendChild(iconChip("S","ok","Upstream over HTTPS"));
+    if (g.www)   td5.appendChild(iconChip("W","","Also serves www"));
+    if (g.local) td5.appendChild(iconChip("L","warn","Local-only"));
     tr.appendChild(td5);
 
-    const td6 = document.createElement("td"); td6.textContent = g.siteCount;
+    const td6 = document.createElement("td");
+    if (g.siteCount > 0){
+      const viewBtn = document.createElement("button");
+      viewBtn.type = "button"; viewBtn.className = "grouplink";
+      viewBtn.textContent = g.siteCount + " site" + (g.siteCount === 1 ? "" : "s") + " →";
+      viewBtn.onclick = () => { setSiteGroupFilter(g); showView("sites"); };
+      td6.appendChild(viewBtn);
+    } else {
+      td6.textContent = "0";
+    }
     tr.appendChild(td6);
 
     const td7 = document.createElement("td");
@@ -1756,6 +2074,10 @@ async function loadState(){
     renderPorts();
     renderSetup();
     renderCertTools();
+    if (detailFqdn){
+      const st = (S.sites||[]).find(s => s.fqdn === detailFqdn);
+      if (st) renderSiteDetail(st);
+    }
   } catch(e){
     consoleOpen(); consoleAppend("[error] state: " + e.message + "\n");
   }
@@ -1771,6 +2093,7 @@ function showView(name){
 }
 $("#nav").addEventListener("click", e => {
   const b = e.target.closest(".navlink"); if (!b) return;
+  if (b.dataset.view === "sites" && siteGroupFilter) setSiteGroupFilter(null);
   showView(b.dataset.view);
 });
 

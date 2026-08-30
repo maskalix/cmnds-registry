@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -113,6 +114,9 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("POST /api/run", ws.auth.requireSession(ws.handleRun))
 	mux.HandleFunc("POST /api/sites/add", ws.auth.requireSession(ws.handleAddSite))
 	mux.HandleFunc("POST /api/sites/meta", ws.auth.requireSession(ws.handleSiteMeta))
+	mux.HandleFunc("GET /api/sites/config", ws.auth.requireSession(ws.handleSiteConfig))
+	mux.HandleFunc("POST /api/sites/manualize", ws.auth.requireSession(ws.handleSiteManualize))
+	mux.HandleFunc("GET /api/sites/logs", ws.auth.requireSession(ws.handleSiteLogs))
 	mux.HandleFunc("POST /api/groups/save", ws.auth.requireSession(ws.handleGroupSave))
 	mux.HandleFunc("POST /api/groups/add", ws.auth.requireSession(ws.handleGroupAdd))
 	mux.HandleFunc("POST /api/groups/delete", ws.auth.requireSession(ws.handleGroupDelete))
@@ -239,8 +243,11 @@ type siteJSON struct {
 	FQDN       string   `json:"fqdn"`
 	Target     string   `json:"target"`
 	RawTarget  string   `json:"rawTarget,omitempty"` // set when a slug was used
+	Machine    string   `json:"machine"`             // slug if known, else the bare host/IP
+	Port       string   `json:"port"`
 	Cert       string   `json:"cert"`
-	CertDays   int      `json:"certDays"` // -1 = missing, -2 = unknown (CERTS_SUB unset)
+	CertDays   int      `json:"certDays"`           // -1 = missing, -2 = unknown (CERTS_SUB unset)
+	CertType   string   `json:"certType,omitempty"` // "http01" or "dns01" (registered wildcard)
 	Auth       bool     `json:"auth"`
 	HTTPS      bool     `json:"https"`
 	WWW        bool     `json:"www"`
@@ -285,6 +292,11 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 	} else {
 		probe := &issuer{certsSub: ws.c.certsSub}
 		seen := map[string]int{} // cert name → days, avoid re-reading shared certs
+		machineNames := ws.c.machineNames()
+		wildcardCerts := map[string]bool{}
+		for _, wc := range ws.c.loadWildcardCerts() {
+			wildcardCerts[wc.Cert] = true
+		}
 		out := make([]siteJSON, 0, len(sites))
 		for _, st := range sites {
 			days := -2
@@ -299,8 +311,26 @@ func (ws *webServer) handleState(w http.ResponseWriter, _ *http.Request, s *webS
 					seen[st.certName] = -1
 				}
 			}
+			certType := "http01"
+			if wildcardCerts[st.certName] {
+				certType = "dns01"
+			}
+
+			// Machine column: show exactly what was typed (a slug or a raw
+			// host) when the line names one; a port-only line inherits its
+			// group's [machine], so fall back to reverse-mapping the
+			// resolved IP through machines.conf for a friendly label there.
+			host, port := splitTarget(st.target)
+			machine := host
+			if rh, rp := splitTarget(st.rawTarget); rh != "" && rp != "" {
+				machine = rh
+			} else if slug, ok := machineNames[host]; ok {
+				machine = slug
+			}
+
 			sj := siteJSON{
-				FQDN: st.fqdn, Target: st.target, Cert: st.certName, CertDays: days,
+				FQDN: st.fqdn, Target: st.target, Machine: machine, Port: port,
+				Cert: st.certName, CertDays: days, CertType: certType,
 				Auth: st.flags.auth, HTTPS: st.flags.https, WWW: st.flags.www, Local: st.flags.local,
 				Group: st.group, GroupIndex: st.groupIndex, GroupLabel: st.groupLabel,
 			}
@@ -694,6 +724,104 @@ func (ws *webServer) handleSiteMeta(w http.ResponseWriter, r *http.Request, _ *w
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// ---------- full site config (view + move to manual) ----------
+
+// findSite looks up one fqdn among the currently-parsed sites.conf entries.
+// Matching against this list (rather than trusting the query/body value
+// directly) means every path built from the result is guaranteed to be a
+// real, already-safe fqdn — not attacker-controlled input.
+func (ws *webServer) findSite(fqdn string) (site, bool) {
+	sites, err := ws.c.parseSites()
+	if err != nil {
+		return site{}, false
+	}
+	for _, st := range sites {
+		if st.fqdn == fqdn {
+			return st, true
+		}
+	}
+	return site{}, false
+}
+
+// handleSiteConfig returns the actual nginx server block for one site — the
+// file currently on disk under conf/ when it exists (exactly what nginx is
+// serving right now), falling back to a freshly rendered one (e.g. a site
+// whose cert is missing and so was skipped by the last Generate).
+func (ws *webServer) handleSiteConfig(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	st, found := ws.findSite(r.URL.Query().Get("domain"))
+	if !found {
+		httpErrJSON(w, http.StatusNotFound, "no such site: "+r.URL.Query().Get("domain"))
+		return
+	}
+	path := filepath.Join(ws.c.confDir, st.fqdn+".conf")
+	content, err := os.ReadFile(path)
+	live := err == nil
+	if err != nil {
+		content = []byte(ws.c.renderSite(st))
+	}
+	writeJSON(w, map[string]any{
+		"fqdn": st.fqdn, "path": path, "content": string(content), "live": live,
+	})
+}
+
+// handleSiteManualize moves a site out of sites.conf into a hand-written
+// manconf/ file holding the (possibly just-edited) content — see
+// convertSiteToManual for why: once someone edits the block directly, the
+// next Regenerate would otherwise blow the edit away.
+func (ws *webServer) handleSiteManualize(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Domain  string `json:"domain"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	st, found := ws.findSite(req.Domain)
+	if !found {
+		httpErrJSON(w, http.StatusNotFound, "no such site: "+req.Domain)
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		httpErrJSON(w, http.StatusBadRequest, "config content cannot be empty")
+		return
+	}
+	path, err := ws.c.convertSiteToManual(st.fqdn, req.Content)
+	if err != nil {
+		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "path": path,
+		"message": "moved to manual config at " + path + " — run Reload or Regenerate to apply",
+	})
+}
+
+// ---------- per-site logs ----------
+
+func (ws *webServer) handleSiteLogs(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	st, found := ws.findSite(r.URL.Query().Get("domain"))
+	if !found {
+		httpErrJSON(w, http.StatusNotFound, "no such site: "+r.URL.Query().Get("domain"))
+		return
+	}
+	which := r.URL.Query().Get("which")
+	if which == "" {
+		which = "access"
+	}
+	path, err := ws.c.siteLogPath(st.fqdn, which)
+	if err != nil {
+		httpErrJSON(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	lines, err := tailLines(path, 200)
+	if err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"fqdn": st.fqdn, "which": which, "path": path, "lines": lines})
 }
 
 // ---------- whole-group management ----------
