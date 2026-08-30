@@ -34,6 +34,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -342,9 +343,11 @@ type certSite struct {
 // certSites resolves sites.conf into per-certificate issuance jobs, deduping by
 // certificate name, plus any registered wildcard certs (see wildcardCerts.go)
 // — so a wildcard obtained once via 'issue --wildcard' is automatically kept
-// current by every later 'issue' and 'renew' run, the same as site certs.
-// SANs aggregate every domain (and its www. variant if the www flag is set)
-// that maps to the same cert name.
+// current by every later 'issue' and 'renew' run, the same as site certs —
+// and any manual config that still looks like one of ours (see
+// manconfCertSites) — so a site moved to manconf/ (convertSiteToManual)
+// doesn't silently stop renewing. SANs aggregate every domain (and its
+// www. variant if the www flag is set) that maps to the same cert name.
 func (c *proxyConfig) certSites() []certSite {
 	index := map[string]*certSite{}
 	var order []string
@@ -360,6 +363,14 @@ func (c *proxyConfig) certSites() []certSite {
 			cs.sans = append(cs.sans, "www."+s.fqdn)
 		}
 	}
+	for _, ms := range c.manconfCertSites() {
+		if _, exists := index[ms.certName]; exists {
+			continue // sites.conf already covers this cert name
+		}
+		msCopy := ms
+		index[ms.certName] = &msCopy
+		order = append(order, ms.certName)
+	}
 	out := make([]certSite, 0, len(order))
 	for _, name := range order {
 		out = append(out, *index[name])
@@ -370,6 +381,43 @@ func (c *proxyConfig) certSites() []certSite {
 			certName: w.Cert,
 			sans:     []string{w.Domain, "*." + w.Domain},
 		})
+	}
+	return out
+}
+
+// manconfServerNameRe / manconfSSLCertRe match the exact shape
+// renderSite() writes (see main.go): "server_name a b c;" and
+// "ssl_certificate <sub>/<cert>/<cert>.crt;" — the cert-directory and
+// cert-filename basename are always the same string.
+var (
+	manconfServerNameRe = regexp.MustCompile(`(?m)^\s*server_name\s+([^;]+);`)
+	manconfSSLCertRe    = regexp.MustCompile(`(?m)^\s*ssl_certificate\s+\S*/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)\.crt\s*;`)
+)
+
+// manconfCertSites best-effort extracts cert issuance/renewal jobs from
+// manual nginx configs (manconf/) that still follow revpro's own template
+// shape — most notably a site moved there via the web UI's "Edit config"
+// (convertSiteToManual), which starts as an exact copy of the generated
+// block. A manual config that doesn't match (hand-written from scratch,
+// pointing at some other cert layout) is skipped — its cert is the admin's
+// own responsibility, same as everything else about a manual config.
+func (c *proxyConfig) manconfCertSites() []certSite {
+	var out []certSite
+	for _, m := range c.manconfFiles() {
+		data, err := os.ReadFile(m.path)
+		if err != nil {
+			continue
+		}
+		nameMatch := manconfServerNameRe.FindStringSubmatch(string(data))
+		certMatch := manconfSSLCertRe.FindStringSubmatch(string(data))
+		if nameMatch == nil || certMatch == nil || certMatch[1] != certMatch[2] {
+			continue
+		}
+		sans := strings.Fields(nameMatch[1])
+		if len(sans) == 0 {
+			continue
+		}
+		out = append(out, certSite{domain: sans[0], certName: certMatch[1], sans: sans})
 	}
 	return out
 }

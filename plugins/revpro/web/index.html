@@ -1494,7 +1494,10 @@ docker compose up -d reverseproxy   <span class="c"># 3. certs exist → nginx s
     <p class="hint" id="confmodal-hint" style="margin-top:0;margin-bottom:.8rem">
       This is the actual nginx server block revpro generated for this site. Editing and saving here
       <b>moves the site to a manual config</b> (<span class="filepath">manconf/</span>) — its line is removed
-      from <span class="filepath">sites.conf</span> and revpro will never overwrite this file again.
+      from <span class="filepath">sites.conf</span> and revpro will never overwrite this file again. Cert
+      issue/renew still covers it afterward, as long as its <code>server_name</code> and
+      <code>ssl_certificate</code> lines stay intact — keep the SSL section as-is if you're only changing
+      routing/headers below it.
     </p>
     <textarea id="confmodal-content" class="conf" rows="20" spellcheck="false"></textarea>
     <div class="modal__actions">
