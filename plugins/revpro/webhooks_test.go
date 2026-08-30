@@ -29,11 +29,42 @@ func TestLoadWebhooksMissingFileIsNotAnError(t *testing.T) {
 	}
 }
 
-func TestDiscordMessageIncludesEventAndFieldsSorted(t *testing.T) {
-	msg := discordMessage("cert-issued", map[string]any{"cert": "example.tld", "days": 90})
-	want := "**revpro** — cert-issued\ncert: example.tld\ndays: 90"
-	if msg != want {
-		t.Errorf("discordMessage = %q, want %q", msg, want)
+func TestDiscordEmbedKnownEventUsesMappedTitleAndColor(t *testing.T) {
+	e := discordEmbed("cert-issue-failed", map[string]any{"cert": "example.tld"})
+	embeds, _ := e["embeds"].([]map[string]any)
+	if len(embeds) != 1 {
+		t.Fatalf("expected exactly one embed, got %+v", e)
+	}
+	if embeds[0]["title"] != discordEventInfo["cert-issue-failed"].Title {
+		t.Errorf("title = %v", embeds[0]["title"])
+	}
+	if embeds[0]["color"] != discordEventInfo["cert-issue-failed"].Color {
+		t.Errorf("color = %v", embeds[0]["color"])
+	}
+	fields, _ := embeds[0]["fields"].([]map[string]any)
+	if len(fields) != 1 || fields[0]["name"] != "Cert" || fields[0]["value"] != "example.tld" {
+		t.Errorf("fields = %+v", fields)
+	}
+}
+
+func TestDiscordEmbedUnknownEventFallsBack(t *testing.T) {
+	e := discordEmbed("some-future-event", nil)
+	embeds := e["embeds"].([]map[string]any)
+	if embeds[0]["color"] != discordDefaultColor {
+		t.Errorf("expected the default color for an unmapped event, got %v", embeds[0]["color"])
+	}
+}
+
+func TestFieldTitleFormatsCamelAndSnakeCase(t *testing.T) {
+	cases := map[string]string{
+		"jail":        "Jail",
+		"countryCode": "Country Code",
+		"error_host":  "Error host",
+	}
+	for in, want := range cases {
+		if got := fieldTitle(in); got != want {
+			t.Errorf("fieldTitle(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -68,9 +99,9 @@ func TestDeliverWebhookDiscord(t *testing.T) {
 	if err := deliverWebhook(wh, "fail2ban-ban", map[string]any{"ip": "203.0.113.9"}); err != nil {
 		t.Fatal(err)
 	}
-	content, _ := gotBody["content"].(string)
-	if content == "" {
-		t.Error("expected a non-empty discord 'content' field")
+	embeds, _ := gotBody["embeds"].([]any)
+	if len(embeds) != 1 {
+		t.Fatalf("expected exactly one embed in the delivered body, got %+v", gotBody)
 	}
 }
 
@@ -107,5 +138,48 @@ func TestFireWebhookOnlyCallsSubscribedEvents(t *testing.T) {
 	fireWebhook(c, "cert-issued", map[string]any{"cert": "example.tld"})
 	if calls != 1 {
 		t.Fatalf("expected exactly one delivery for the subscribed event, got %d calls", calls)
+	}
+}
+
+func TestAppendAuditAndRecentAuditNewestFirst(t *testing.T) {
+	c := &proxyConfig{mainFolder: t.TempDir()}
+	c.appendAudit("site-added", map[string]any{"fqdn": "a.example.tld"})
+	c.appendAudit("fail2ban-ban", map[string]any{"ip": "203.0.113.9"})
+
+	got, err := c.recentAudit(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(got))
+	}
+	if got[0].Event != "fail2ban-ban" {
+		t.Errorf("expected the most recent entry first, got %+v", got[0])
+	}
+	if got[0].Fields["ip"] != "203.0.113.9" {
+		t.Errorf("fields not round-tripped: %+v", got[0].Fields)
+	}
+}
+
+func TestRecentAuditMissingFileIsNotAnError(t *testing.T) {
+	c := &proxyConfig{mainFolder: t.TempDir()}
+	got, err := c.recentAudit(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected no entries, got %v", got)
+	}
+}
+
+func TestFireWebhookRecordsAuditEvenWithNoWebhooksConfigured(t *testing.T) {
+	c := &proxyConfig{mainFolder: t.TempDir()}
+	fireWebhook(c, "cert-issued", map[string]any{"cert": "example.tld"})
+	got, err := c.recentAudit(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Event != "cert-issued" {
+		t.Errorf("expected the event to be audited regardless of webhook config, got %+v", got)
 	}
 }

@@ -16,8 +16,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func fail2banClient(args ...string) (string, error) {
@@ -165,10 +168,34 @@ func detectLocalCIDRs() []string {
 	return out
 }
 
+// errorRedirectFilterConf matches every line of the error-redirect trap
+// host's access log — being logged there at all *is* the signal (see
+// templates/error.conf: every generated site 302s its 4xx/5xx upstream
+// errors to one shared $error_redirect_base host), so the filter doesn't
+// need to parse a status code, just the client IP.
+const errorRedirectFilterConf = `[Definition]
+failregex = ^<HOST> -
+ignoreregex =
+`
+
+// httpErrorsFilterConf matches any 4xx/5xx response in a standard combined-
+// format access log — the generic "frequently gets HTTP error codes" signal,
+// applied across every site's own log rather than one shared trap host.
+const httpErrorsFilterConf = `[Definition]
+failregex = ^<HOST> -.*"(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH|CONNECT|TRACE) \S+ HTTP/\d(\.\d)?" (4\d\d|5\d\d)
+ignoreregex =
+`
+
 // f2bJailLocal renders /etc/fail2ban/jail.local. ignoreLAN is a
 // space-separated list of extra CIDRs/IPs to never ban (in addition to
 // loopback) — normally this box's own detected private-network address(es).
-func f2bJailLocal(logDir, ignoreLAN string) string {
+// errorHost, if set, is the shared error-redirect trap host (e.g.
+// "error.example.tld" — see REVPRO_F2B_ERROR_HOST in fail2banUsage) whose
+// access log gets its own low-threshold jail, since nothing legitimate
+// should hit it often. The generic http-errors jail (any 4xx/5xx, across
+// every site) is always included — findtime/maxretry chosen generously
+// (30 in 10m) so ordinary browsing 404s don't trip it.
+func f2bJailLocal(logDir, ignoreLAN, errorHost string) string {
 	ignore := "127.0.0.1/8 ::1"
 	if ignoreLAN != "" {
 		ignore += " " + ignoreLAN
@@ -180,6 +207,22 @@ func f2bJailLocal(logDir, ignoreLAN string) string {
 		// not just ones the web UI's guard scan triggers.
 		action = "%(action_)s\n         revpro-abuseipdb[name=%(__name__)s]"
 	}
+
+	var errorJail string
+	if errorHost != "" {
+		// findtime=3m, maxretry=8: tolerates a once-a-minute external
+		// monitor (a steady ~3 hits per 3m window) while still catching a
+		// scanner bursting many requests in seconds.
+		errorJail = fmt.Sprintf(`
+[nginx-error-redirect]
+enabled = true
+filter = nginx-error-redirect
+logpath = %s/%s_access.log
+findtime = 3m
+maxretry = 8
+`, logDir, errorHost)
+	}
+
 	return fmt.Sprintf(`# Written by 'revpro fail2ban setup' — re-running setup overwrites this
 # file, so hand edits belong in a jail.d/*.local drop-in instead.
 [DEFAULT]
@@ -201,6 +244,13 @@ logpath = %s/*_error.log
 enabled = true
 logpath = %s/*_access.log
 
+[nginx-http-errors]
+enabled = true
+filter = nginx-http-errors
+logpath = %s/*_access.log
+findtime = 10m
+maxretry = 30
+%s
 [recidive]
 enabled = true
 bantime = 1w
@@ -213,7 +263,7 @@ enabled = true
 filter =
 banaction = iptables-allports
 logpath =
-`, ignore, action, logDir, logDir, manualJail)
+`, ignore, action, logDir, logDir, logDir, errorJail, manualJail)
 }
 
 // f2bActionConf renders the AbuseIPDB report-hook fail2ban action: on ban,
@@ -262,6 +312,9 @@ func (c *proxyConfig) f2bSetup() error {
 	if err := os.MkdirAll("/etc/fail2ban/action.d", 0o755); err != nil {
 		return err
 	}
+	if err := os.MkdirAll("/etc/fail2ban/filter.d", 0o755); err != nil {
+		return err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve own path for the report-hook action: %w", err)
@@ -269,16 +322,29 @@ func (c *proxyConfig) f2bSetup() error {
 	if err := os.WriteFile("/etc/fail2ban/action.d/revpro-abuseipdb.conf", []byte(f2bActionConf(exe)), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile("/etc/fail2ban/filter.d/nginx-error-redirect.conf", []byte(errorRedirectFilterConf), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile("/etc/fail2ban/filter.d/nginx-http-errors.conf", []byte(httpErrorsFilterConf), 0o644); err != nil {
+		return err
+	}
 
 	ignoreLAN := configRead("REVPRO_F2B_IGNORE_LAN")
 	if ignoreLAN == "" {
 		ignoreLAN = strings.Join(detectLocalCIDRs(), " ")
 	}
-	content := f2bJailLocal(c.logDir, ignoreLAN)
+	errorHost := configRead("REVPRO_F2B_ERROR_HOST")
+	content := f2bJailLocal(c.logDir, ignoreLAN, errorHost)
 	if err := os.WriteFile("/etc/fail2ban/jail.local", []byte(content), 0o644); err != nil {
 		return err
 	}
 	ok("Wrote /etc/fail2ban/jail.local (ignoreip: %s)", ignore(content))
+	if errorHost != "" {
+		ok("Error-redirect trap jail watching %s/%s_access.log", c.logDir, errorHost)
+	} else {
+		info("No REVPRO_F2B_ERROR_HOST set — skipping the error-redirect trap jail. Set it to your " +
+			"$error_redirect_base host (see templates/nginx.conf) to ban IPs that repeatedly land there.")
+	}
 
 	if err := run("systemctl", "enable", "--now", "fail2ban"); err != nil {
 		return err
@@ -286,8 +352,12 @@ func (c *proxyConfig) f2bSetup() error {
 	if err := run("systemctl", "restart", "fail2ban"); err != nil {
 		return err
 	}
-	ok("fail2ban installed and running — jails: sshd, nginx-http-auth, nginx-botsearch, recidive, %s", manualJail)
-	fireWebhook(c, "fail2ban-setup", map[string]any{"logDir": c.logDir})
+	jails := "sshd, nginx-http-auth, nginx-botsearch, nginx-http-errors, recidive, " + manualJail
+	if errorHost != "" {
+		jails += ", nginx-error-redirect"
+	}
+	ok("fail2ban installed and running — jails: %s", jails)
+	fireWebhook(c, "fail2ban-setup", map[string]any{"logDir": c.logDir, "errorHost": errorHost})
 	return nil
 }
 
@@ -379,8 +449,92 @@ Usage:
 
 Config variables (via 'cmnds config write'):
   REVPRO_F2B_IGNORE_LAN       extra ignoreip entries (default: auto-detected private interfaces)
+  REVPRO_F2B_ERROR_HOST       your $error_redirect_base host (templates/nginx.conf), e.g.
+                               error.example.tld — every site 302s its 4xx/5xx upstream errors
+                               there, so frequent hits are a strong scanner signal. Unset = no
+                               error-redirect trap jail.
   REVPRO_ABUSEIPDB_KEY        API key from https://www.abuseipdb.com/account/api — required for
                                outbound reporting and 'guard'
   REVPRO_ABUSEIPDB_THRESHOLD  abuseConfidenceScore that triggers a 'guard' ban (default 50)
 `)
+}
+
+// ---------- "approaching ban" (not banned yet, but getting close) ----------
+
+// jailThresholds mirrors the findtime/maxretry each jail in f2bJailLocal's
+// template is written with. fail2ban-client doesn't expose a per-IP
+// breakdown of in-progress (not-yet-banned) failure counts, only the
+// aggregate "currently failed" count per jail — so approachingBans instead
+// tails fail2ban's own log for "Found <IP>" filter matches and does the
+// counting itself, which needs to know each jail's own window. Must be
+// kept in sync with f2bJailLocal.
+var jailThresholds = map[string]struct {
+	findtime time.Duration
+	maxretry int
+}{
+	"sshd":                 {10 * time.Minute, 5},
+	"nginx-http-auth":      {10 * time.Minute, 5},
+	"nginx-botsearch":      {10 * time.Minute, 5},
+	"nginx-http-errors":    {10 * time.Minute, 30},
+	"nginx-error-redirect": {3 * time.Minute, 8},
+}
+
+// approachingIP is one IP that's partway to tripping a jail's maxretry —
+// the web UI's "about to be banned" view.
+type approachingIP struct {
+	IP    string `json:"ip"`
+	Jail  string `json:"jail"`
+	Count int    `json:"count"`
+	Max   int    `json:"max"`
+}
+
+// f2bFoundLineRe matches fail2ban.log's own "Found <IP>" filter-match
+// lines, e.g.:
+//
+//	2026-08-30 14:32:10,123 fail2ban.filter [12345]: INFO [nginx-botsearch] Found 203.0.113.9 - 2026-08-30 14:32:10
+var f2bFoundLineRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ .*\[([A-Za-z0-9_-]+)\]\s+Found (\S+)`)
+
+// f2bLogPath is a var (not a literal in approachingBans) so tests can point
+// it at a fixture file instead of the real /var/log/fail2ban.log.
+var f2bLogPath = "/var/log/fail2ban.log"
+
+// approachingBans tails fail2ban's own log, tallies "Found <IP>" matches
+// per (jail, IP) within that jail's own findtime window, and returns
+// anything at least halfway to that jail's maxretry but not yet banned.
+// Best-effort — a missing/unparseable log yields an empty list, not an
+// error, since this is a supplementary view, not a control surface.
+func approachingBans() []approachingIP {
+	lines, err := tailLines(f2bLogPath, 20000)
+	if err != nil {
+		return nil
+	}
+	now := time.Now()
+	type key struct{ jail, ip string }
+	counts := map[key]int{}
+	for _, line := range lines {
+		m := f2bFoundLineRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		th, known := jailThresholds[m[2]]
+		if !known {
+			continue
+		}
+		ts, err := time.ParseInLocation("2006-01-02 15:04:05", m[1], time.Local)
+		if err != nil || now.Sub(ts) > th.findtime {
+			continue
+		}
+		counts[key{jail: m[2], ip: m[3]}]++
+	}
+
+	var out []approachingIP
+	for k, n := range counts {
+		th := jailThresholds[k.jail]
+		if n >= th.maxretry || n*2 < th.maxretry {
+			continue // already over threshold (will show as banned instead), or not "close" yet
+		}
+		out = append(out, approachingIP{IP: k.ip, Jail: k.jail, Count: n, Max: th.maxretry})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	return out
 }

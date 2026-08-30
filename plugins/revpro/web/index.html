@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>revpro</title>
+<script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
 <style>
 /* ============================================================================
    DESIGN TOKENS — mirrors the skali.eu / sitarina family (same tokens as the
@@ -747,12 +748,32 @@ pre.code .k{color:#8fc7a5}
         <div class="panel__body">
           <p class="hint" style="margin-top:0">fail2ban isn't installed on this box yet. Setup installs the
             package, writes <code>/etc/fail2ban/jail.local</code> with an <code>sshd</code> jail, nginx
-            botsearch/http-auth jails watching this install's logs, a long-bantime <code>recidive</code> jail
-            for repeat offenders, and a ban-only <code>revpro-manual</code> jail for one-off/guard-scan bans.
-            The ignoreip list is auto-detected from this box's own private network address(es), so it can't
-            lock out its own management traffic — and every bantime is finite, so even a wrong ignoreip
-            self-heals instead of a permanent lockout.</p>
+            botsearch/http-auth/http-errors jails watching this install's logs, a long-bantime
+            <code>recidive</code> jail for repeat offenders, and a ban-only <code>revpro-manual</code> jail for
+            one-off/guard-scan bans. The ignoreip list is auto-detected from this box's own private network
+            address(es), so it can't lock out its own management traffic — and every bantime is finite, so
+            even a wrong ignoreip self-heals instead of a permanent lockout.</p>
           <button class="btn btn--primary" data-run="f2b-setup">Set up fail2ban</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head"><h3 class="panel__title">Error-redirect trap</h3></header>
+        <div class="panel__body">
+          <p class="hint" style="margin-top:0">Every site's nginx block 302s its own 4xx/5xx upstream errors to
+            one shared host (<code>$error_redirect_base</code> in <span class="filepath">nginx.conf</span> —
+            e.g. <code>error.example.tld</code>). Nothing legitimate should hit it often, so if you set it here,
+            (re-)running setup adds a low-threshold jail watching just that host's access log.</p>
+          <form id="errorhostform" class="formgrid">
+            <div class="field">
+              <label for="f2b-error-host">Error-redirect host</label>
+              <input type="text" id="f2b-error-host" placeholder="error.example.tld">
+            </div>
+            <div class="field" style="display:flex;align-items:end">
+              <button type="submit" class="btn">Save</button>
+            </div>
+          </form>
+          <span class="savemsg" id="errorhost-msg"></span>
         </div>
       </section>
 
@@ -789,6 +810,18 @@ pre.code .k{color:#8fc7a5}
         </div>
       </section>
 
+      <section class="panel" id="approaching-panel" style="display:none">
+        <header class="panel__head"><h3 class="panel__title">Aspiring to be banned</h3></header>
+        <p class="hint" style="margin:0 1.1rem .8rem">IPs partway to tripping a jail's threshold, from
+          fail2ban's own log — not banned yet.</p>
+        <div class="panel__body panel__body--flush tablewrap">
+          <table id="approachingtable">
+            <thead><tr><th>IP</th><th>Jail</th><th>Progress</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
       <section class="panel">
         <header class="panel__head"><h3 class="panel__title">AbuseIPDB</h3></header>
         <div class="panel__body">
@@ -821,12 +854,39 @@ pre.code .k{color:#8fc7a5}
           <h3 class="panel__title">IP access <span id="ipcount"></span></h3>
           <button class="btn btn--mini" id="ip-refresh">Refresh</button>
         </header>
+        <div class="panel__body" style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
+          <input type="text" id="ip-filter" placeholder="filter by IP, country, ISP, site…" style="max-width:20rem">
+          <label class="inline-check"><input type="checkbox" id="ip-hide-local" checked> hide LAN/private IPs</label>
+        </div>
         <div class="panel__body panel__body--flush tablewrap tablewrap--scroll">
           <table id="iptable">
             <thead><tr>
-              <th>IP</th><th>Location</th><th>ISP</th><th>Requests</th><th>Sites</th><th>Last seen</th>
-              <th>Abuse score</th><th>Status</th><th></th>
+              <th data-sort="ip">IP <span class="sortarrow"></span></th>
+              <th data-sort="country">Location <span class="sortarrow"></span></th>
+              <th data-sort="isp">ISP <span class="sortarrow"></span></th>
+              <th data-sort="requests">Requests <span class="sortarrow"></span></th>
+              <th data-sort="sites">Sites <span class="sortarrow"></span></th>
+              <th data-sort="lastSeen">Last seen <span class="sortarrow"></span></th>
+              <th data-sort="abuseScore">Abuse score <span class="sortarrow"></span></th>
+              <th data-sort="banned">Status <span class="sortarrow"></span></th>
+              <th></th>
             </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel__head">
+          <h3 class="panel__title">Activity</h3>
+          <button class="btn btn--mini" id="audit-refresh">Refresh</button>
+        </header>
+        <p class="hint" style="margin:0 1.1rem .8rem">Every ban/unban, cert issue/renewal (and failures), site
+          add, fail2ban setup, guard block, and routine failure revpro has recorded — the same events webhooks
+          fire on.</p>
+        <div class="panel__body panel__body--flush tablewrap tablewrap--scroll">
+          <table id="audittable">
+            <thead><tr><th>When</th><th>Event</th><th>Details</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -948,7 +1008,7 @@ pre.code .k{color:#8fc7a5}
         <header class="panel__head"><h3 class="panel__title">Top visitor IPs</h3></header>
         <div class="panel__body panel__body--flush tablewrap">
           <table id="currentiptable">
-            <thead><tr><th>IP</th><th>Requests</th><th>Sites</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>IP</th><th>Location</th><th>Requests</th><th>Sites</th><th>Last seen</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -2337,14 +2397,17 @@ function renderPorts(){
 
 /* ---------- security: fail2ban + IP access + AbuseIPDB ---------- */
 
-// countryFlag turns an ISO 3166-1 alpha-2 code into its flag emoji by
-// mapping each letter onto a Unicode regional-indicator symbol — no image
-// assets or icon library needed.
-function countryFlag(code){
-  if (!code || code.length !== 2) return "";
-  const A = 0x1F1E6, base = "A".charCodeAt(0);
-  return String.fromCodePoint(A + code.toUpperCase().charCodeAt(0) - base,
-                               A + code.toUpperCase().charCodeAt(1) - base);
+// countryFlagIcon returns an Iconify <iconify-icon> flag glyph for an ISO
+// 3166-1 alpha-2 code (Iconify's circle-flags set), or a plain "—" node
+// when there's no code — icon only, no country-name text alongside it.
+function countryFlagIcon(code, titleText){
+  if (!code) { const s = document.createElement("span"); s.className = "dim"; s.textContent = "—"; return s; }
+  const el = document.createElement("iconify-icon");
+  el.setAttribute("icon", "circle-flags:" + code.toLowerCase());
+  el.style.fontSize = "1.15rem";
+  el.style.verticalAlign = "middle";
+  if (titleText) el.title = titleText;
+  return el;
 }
 
 function abuseScoreChip(score){
@@ -2358,11 +2421,93 @@ async function loadSecurity(){
   try {
     const f2b = await apiJSON("/api/security/f2b");
     renderF2BPanel(f2b);
+    $("#f2b-error-host").value = f2b.errorHost || "";
   } catch(e){
     $("#f2b-uninstalled-panel").style.display = "";
     $("#f2b-jails-panel").style.display = "none";
   }
   loadIPTable();
+  loadApproaching();
+  loadAudit();
+}
+
+$("#errorhostform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const msg = $("#errorhost-msg"); msg.textContent = ""; msg.className = "savemsg";
+  try {
+    await apiJSON("/api/security/f2b/error-host", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({host: $("#f2b-error-host").value.trim()})});
+    msg.textContent = "Saved — re-run setup to apply"; msg.classList.add("ok");
+  } catch(e){
+    msg.textContent = e.message; msg.classList.add("bad");
+  }
+});
+
+async function loadApproaching(){
+  try {
+    const d = await apiJSON("/api/security/f2b/approaching");
+    renderApproaching(d.approaching || []);
+  } catch(e){ /* fail2ban not installed yet, or no log — just stay hidden */ }
+}
+
+function renderApproaching(rows){
+  $("#approaching-panel").style.display = rows.length ? "" : "none";
+  const tb = $("#approachingtable tbody"); tb.innerHTML = "";
+  rows.forEach(row => {
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = row.ip;
+    tr.appendChild(t1);
+    const t2 = document.createElement("td"); t2.className = "mono"; t2.textContent = row.jail;
+    tr.appendChild(t2);
+    const t3 = document.createElement("td");
+    t3.appendChild(chip(row.count + " / " + row.max, row.count >= row.max * 0.8 ? "bad" : "warn"));
+    tr.appendChild(t3);
+    const t4 = document.createElement("td");
+    const b = document.createElement("button");
+    b.className = "btn btn--mini"; b.textContent = "ban now";
+    b.onclick = () => f2bBanIP(row.jail, row.ip);
+    t4.appendChild(b);
+    tr.appendChild(t4);
+    tb.appendChild(tr);
+  });
+}
+
+async function loadAudit(){
+  try {
+    const d = await apiJSON("/api/security/audit?limit=200");
+    renderAudit(d.entries || []);
+  } catch(e){
+    consoleOpen(); consoleAppend("[error] audit: " + e.message + "\n");
+  }
+}
+$("#audit-refresh").addEventListener("click", loadAudit);
+
+const auditEventChip = {
+  "cert-issued": "ok", "cert-renewed": "ok", "fail2ban-setup": "ok",
+  "cert-issue-failed": "bad", "cert-renew-failed": "bad", "routine-failed": "bad",
+  "fail2ban-ban": "warn", "guard-blocked": "warn", "fail2ban-unban": "",
+  "site-added": "accent",
+};
+function renderAudit(entries){
+  const tb = $("#audittable tbody"); tb.innerHTML = "";
+  entries.forEach(e => {
+    const tr = document.createElement("tr");
+    const t1 = document.createElement("td"); t1.className = "dim"; t1.style.fontSize = ".75rem";
+    t1.textContent = timeAgo(e.time);
+    tr.appendChild(t1);
+    const t2 = document.createElement("td");
+    t2.appendChild(chip(e.event, auditEventChip[e.event] || ""));
+    tr.appendChild(t2);
+    const t3 = document.createElement("td"); t3.className = "dim"; t3.style.fontSize = ".75rem";
+    t3.textContent = Object.entries(e.fields||{}).map(([k,v]) => k + "=" + v).join("  ");
+    tr.appendChild(t3);
+    tb.appendChild(tr);
+  });
+  if (!entries.length){
+    const tr = document.createElement("tr");
+    const td = document.createElement("td"); td.colSpan = 3; td.className = "empty"; td.textContent = "No activity recorded yet.";
+    tr.appendChild(td); tb.appendChild(tr);
+  }
 }
 
 function renderF2BPanel(f2b){
@@ -2427,7 +2572,7 @@ async function openJailModal(name){
       const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = row.ip;
       tr.appendChild(t1);
       const t2 = document.createElement("td");
-      t2.textContent = row.countryCode ? (countryFlag(row.countryCode) + " " + (row.country || row.countryCode) + (row.city ? " · " + row.city : "")) : "—";
+      t2.appendChild(countryFlagIcon(row.countryCode, [row.country, row.city].filter(Boolean).join(" · ")));
       tr.appendChild(t2);
       const t3 = document.createElement("td"); t3.className = "dim"; t3.textContent = row.isp || "—";
       tr.appendChild(t3);
@@ -2495,10 +2640,14 @@ $("#abuseform").addEventListener("submit", async e => {
   }
 });
 
+let ipTableData = {ips: [], f2bInstalled: false};
+let ipSort = {key: "requests", dir: -1};
+
 async function loadIPTable(){
   try {
     const d = await apiJSON("/api/security/ips?limit=150");
-    renderIPTable(d);
+    ipTableData = d;
+    renderIPTable();
   } catch(e){
     $("#ipcount").textContent = "";
     const tb = $("#iptable tbody"); tb.innerHTML = "";
@@ -2508,10 +2657,56 @@ async function loadIPTable(){
   }
 }
 $("#ip-refresh").addEventListener("click", loadIPTable);
+$("#ip-filter").addEventListener("input", renderIPTable);
+$("#ip-hide-local").addEventListener("change", renderIPTable);
+$("#iptable thead").addEventListener("click", e => {
+  const th = e.target.closest("th[data-sort]"); if (!th) return;
+  if (ipSort.key === th.dataset.sort) ipSort.dir *= -1;
+  else ipSort = {key: th.dataset.sort, dir: 1};
+  renderIPTable();
+});
 
-function renderIPTable(d){
-  const rows = d.ips || [];
-  $("#ipcount").textContent = "· " + rows.length;
+function ipSortValue(row, key){
+  switch(key){
+    case "ip":         return row.ip;
+    case "country":    return row.country || row.countryCode || "";
+    case "isp":        return row.isp || "";
+    case "requests":   return row.requests || 0;
+    case "sites":      return (row.sites||[]).length;
+    case "lastSeen":   return row.lastSeen || "";
+    case "abuseScore": return row.abuseScore;
+    case "banned":     return row.banned ? 1 : 0;
+    default:           return "";
+  }
+}
+
+function renderIPTable(){
+  const d = ipTableData;
+  let rows = (d.ips || []).slice();
+
+  if ($("#ip-hide-local").checked) rows = rows.filter(r => !r.local);
+  const q = $("#ip-filter").value.trim().toLowerCase();
+  if (q){
+    rows = rows.filter(r => (
+      r.ip.toLowerCase().includes(q) ||
+      (r.country||"").toLowerCase().includes(q) ||
+      (r.countryCode||"").toLowerCase().includes(q) ||
+      (r.isp||"").toLowerCase().includes(q) ||
+      (r.sites||[]).some(s => s.toLowerCase().includes(q))
+    ));
+  }
+  rows.sort((a,b) => {
+    const av = ipSortValue(a, ipSort.key), bv = ipSortValue(b, ipSort.key);
+    return av < bv ? -ipSort.dir : av > bv ? ipSort.dir : 0;
+  });
+
+  $$("#iptable thead th[data-sort]").forEach(th => {
+    const on = th.dataset.sort === ipSort.key;
+    th.classList.toggle("is-sorted", on);
+    th.querySelector(".sortarrow").textContent = on ? (ipSort.dir === 1 ? "↑" : "↓") : "";
+  });
+
+  $("#ipcount").textContent = "· " + rows.length + (rows.length !== (d.ips||[]).length ? " of " + (d.ips||[]).length : "");
   const tb = $("#iptable tbody"); tb.innerHTML = "";
   rows.forEach(row => {
     const tr = document.createElement("tr");
@@ -2521,8 +2716,7 @@ function renderIPTable(d){
 
     const t2 = document.createElement("td");
     if (row.local) t2.innerHTML = '<span class="dim">LAN</span>';
-    else if (row.countryCode) t2.textContent = countryFlag(row.countryCode) + " " + (row.country || row.countryCode) + (row.city ? " · " + row.city : "");
-    else t2.innerHTML = '<span class="dim">—</span>';
+    else t2.appendChild(countryFlagIcon(row.countryCode, [row.country, row.city].filter(Boolean).join(" · ")));
     tr.appendChild(t2);
 
     const t2b = document.createElement("td"); t2b.className = "dim"; t2b.textContent = row.isp || "—";
@@ -2564,7 +2758,8 @@ function renderIPTable(d){
   });
   if (!rows.length){
     const tr = document.createElement("tr");
-    const td = document.createElement("td"); td.colSpan = 9; td.className = "empty"; td.textContent = "No traffic logged yet.";
+    const td = document.createElement("td"); td.colSpan = 9; td.className = "empty";
+    td.textContent = (d.ips||[]).length ? "No IPs match the current filter." : "No traffic logged yet.";
     tr.appendChild(td); tb.appendChild(tr);
   }
 }
@@ -2789,19 +2984,23 @@ function renderCurrent(d){
     const tr = document.createElement("tr");
     const t1 = document.createElement("td"); t1.className = "mono"; t1.textContent = ip.ip;
     tr.appendChild(t1);
-    const t2 = document.createElement("td"); t2.className = "mono"; t2.textContent = ip.requests;
+    const t2 = document.createElement("td");
+    if (ip.local) t2.innerHTML = '<span class="dim">LAN</span>';
+    else t2.appendChild(countryFlagIcon(ip.countryCode, [ip.country, ip.city].filter(Boolean).join(" · ")));
     tr.appendChild(t2);
-    const t3 = document.createElement("td"); t3.className = "dim"; t3.textContent = (ip.sites||[]).join(", ");
+    const t3 = document.createElement("td"); t3.className = "mono"; t3.textContent = ip.requests;
     tr.appendChild(t3);
-    const t4 = document.createElement("td"); t4.className = "dim";
-    t4.textContent = ip.lastSeen ? timeAgo(ip.lastSeen) : "—";
+    const t4 = document.createElement("td"); t4.className = "dim"; t4.textContent = (ip.sites||[]).join(", ");
     tr.appendChild(t4);
+    const t5 = document.createElement("td"); t5.className = "dim";
+    t5.textContent = ip.lastSeen ? timeAgo(ip.lastSeen) : "—";
+    tr.appendChild(t5);
     ib.appendChild(tr);
   });
   if (!(d.ips||[]).length){
     const tr = document.createElement("tr");
-    const td = document.createElement("td"); td.colSpan = 4; td.className = "empty"; td.textContent = "No traffic logged yet.";
-    tr.appendChild(td); tb.appendChild(tr);
+    const td = document.createElement("td"); td.colSpan = 5; td.className = "empty"; td.textContent = "No traffic logged yet.";
+    tr.appendChild(td); ib.appendChild(tr);
   }
 }
 

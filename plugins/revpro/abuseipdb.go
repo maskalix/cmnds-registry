@@ -55,11 +55,13 @@ func abuseThreshold() int {
 // IDs (https://www.abuseipdb.com/categories). Unmapped jails fall back to
 // 15 (Hacking) — generic but still meaningful.
 var abuseCategories = map[string][]int{
-	"sshd":            {18, 22}, // Brute-Force, SSH
-	"nginx-http-auth": {21},     // Web App Attack
-	"nginx-botsearch": {19, 21}, // Bad Web Bot, Web App Attack
-	"recidive":        {15},     // Hacking (repeat offender, cause already reported once)
-	manualJail:        {19},     // Bad Web Bot (manual/guard bans are traffic-pattern driven)
+	"sshd":                 {18, 22}, // Brute-Force, SSH
+	"nginx-http-auth":      {21},     // Web App Attack
+	"nginx-botsearch":      {19, 21}, // Bad Web Bot, Web App Attack
+	"nginx-http-errors":    {21},     // Web App Attack (excessive 4xx/5xx — probing/scraping)
+	"nginx-error-redirect": {19, 21}, // Bad Web Bot (repeatedly landing on the shared error page)
+	"recidive":             {15},     // Hacking (repeat offender, cause already reported once)
+	manualJail:             {19},     // Bad Web Bot (manual/guard bans are traffic-pattern driven)
 }
 
 func abuseCategoriesFor(jail string) []int {

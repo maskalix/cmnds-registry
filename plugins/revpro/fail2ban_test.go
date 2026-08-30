@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const sampleF2BStatus = `Status
@@ -60,7 +63,7 @@ func TestParseJailStatus(t *testing.T) {
 }
 
 func TestF2BJailLocalIncludesIgnoreAndLogDir(t *testing.T) {
-	out := f2bJailLocal("/revpro/logs", "192.168.2.0/24")
+	out := f2bJailLocal("/revpro/logs", "192.168.2.0/24", "")
 	if !strings.Contains(out, "ignoreip = 127.0.0.1/8 ::1 192.168.2.0/24") {
 		t.Errorf("ignoreip line missing/wrong:\n%s", out)
 	}
@@ -78,15 +81,40 @@ func TestF2BJailLocalIncludesIgnoreAndLogDir(t *testing.T) {
 	}
 }
 
+func TestF2BJailLocalAlwaysIncludesGenericHTTPErrorsJail(t *testing.T) {
+	out := f2bJailLocal("/revpro/logs", "", "")
+	if !strings.Contains(out, "[nginx-http-errors]") {
+		t.Errorf("expected the generic http-errors jail always present:\n%s", out)
+	}
+	if !strings.Contains(out, "filter = nginx-http-errors") {
+		t.Errorf("expected nginx-http-errors filter reference:\n%s", out)
+	}
+}
+
+func TestF2BJailLocalErrorHostJailOnlyWhenSet(t *testing.T) {
+	without := f2bJailLocal("/revpro/logs", "", "")
+	if strings.Contains(without, "[nginx-error-redirect]") {
+		t.Errorf("expected no error-redirect jail when errorHost is unset:\n%s", without)
+	}
+
+	with := f2bJailLocal("/revpro/logs", "", "error.example.tld")
+	if !strings.Contains(with, "[nginx-error-redirect]") {
+		t.Errorf("expected an error-redirect jail when errorHost is set:\n%s", with)
+	}
+	if !strings.Contains(with, "logpath = /revpro/logs/error.example.tld_access.log") {
+		t.Errorf("expected the trap host's own access log as logpath:\n%s", with)
+	}
+}
+
 func TestF2BJailLocalNoExtraIgnoreStillHasLoopback(t *testing.T) {
-	out := f2bJailLocal("/revpro/logs", "")
+	out := f2bJailLocal("/revpro/logs", "", "")
 	if !strings.Contains(out, "ignoreip = 127.0.0.1/8 ::1\n") {
 		t.Errorf("expected bare loopback ignoreip, got:\n%s", out)
 	}
 }
 
 func TestIgnoreExtractsLine(t *testing.T) {
-	out := f2bJailLocal("/x/logs", "10.0.0.0/8")
+	out := f2bJailLocal("/x/logs", "10.0.0.0/8", "")
 	if got := ignore(out); got != "127.0.0.1/8 ::1 10.0.0.0/8" {
 		t.Errorf("ignore() = %q", got)
 	}
@@ -113,4 +141,47 @@ func TestDetectLocalCIDRsDoesNotPanic(t *testing.T) {
 	// environment (CI sandbox vs. a real box), so there's nothing specific
 	// to assert about the contents.
 	_ = detectLocalCIDRs()
+}
+
+func TestApproachingBansParsesAndFiltersByThreshold(t *testing.T) {
+	old := f2bLogPath
+	f2bLogPath = filepath.Join(t.TempDir(), "fail2ban.log")
+	defer func() { f2bLogPath = old }()
+
+	now := time.Now()
+	fmtLine := func(ago time.Duration, jail, ip string) string {
+		ts := now.Add(-ago).Format("2006-01-02 15:04:05")
+		return ts + ",123 fail2ban.filter         [111]: INFO    [" + jail + "] Found " + ip + " - " + ts
+	}
+	var lines []string
+	// nginx-http-errors: maxretry=30, findtime=10m — 20 recent hits is "close" (>=15, <30).
+	for i := 0; i < 20; i++ {
+		lines = append(lines, fmtLine(time.Duration(i)*time.Second, "nginx-http-errors", "203.0.113.9"))
+	}
+	// sshd: maxretry=5, findtime=10m — 2 hits is well under half, should NOT appear.
+	lines = append(lines, fmtLine(1*time.Minute, "sshd", "198.51.100.4"))
+	lines = append(lines, fmtLine(2*time.Minute, "sshd", "198.51.100.4"))
+	// An old hit outside the findtime window must not count.
+	lines = append(lines, fmtLine(20*time.Minute, "nginx-http-errors", "192.0.2.1"))
+
+	if err := os.WriteFile(f2bLogPath, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := approachingBans()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one approaching IP, got %+v", got)
+	}
+	if got[0].IP != "203.0.113.9" || got[0].Jail != "nginx-http-errors" || got[0].Count != 20 || got[0].Max != 30 {
+		t.Errorf("got %+v", got[0])
+	}
+}
+
+func TestApproachingBansMissingLogYieldsEmpty(t *testing.T) {
+	old := f2bLogPath
+	f2bLogPath = filepath.Join(t.TempDir(), "does-not-exist.log")
+	defer func() { f2bLogPath = old }()
+	if got := approachingBans(); got != nil {
+		t.Errorf("expected nil for a missing log, got %v", got)
+	}
 }

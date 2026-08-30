@@ -129,6 +129,9 @@ func (ws *webServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/security-check", ws.auth.requireSession(ws.handleSecurityCheck))
 	mux.HandleFunc("GET /api/security/f2b", ws.auth.requireSession(ws.handleF2BStatus))
 	mux.HandleFunc("GET /api/security/f2b/jail", ws.auth.requireSession(ws.handleF2BJailDetail))
+	mux.HandleFunc("GET /api/security/f2b/approaching", ws.auth.requireSession(ws.handleF2BApproaching))
+	mux.HandleFunc("POST /api/security/f2b/error-host", ws.auth.requireSession(ws.handleF2BErrorHostSave))
+	mux.HandleFunc("GET /api/security/audit", ws.auth.requireSession(ws.handleAudit))
 	mux.HandleFunc("POST /api/security/f2b/ban", ws.auth.requireSession(ws.handleF2BBan))
 	mux.HandleFunc("POST /api/security/f2b/unban", ws.auth.requireSession(ws.handleF2BUnban))
 	mux.HandleFunc("GET /api/security/ips", ws.auth.requireSession(ws.handleSecurityIPs))
@@ -1328,9 +1331,11 @@ func (ws *webServer) handleSecurityCheck(w http.ResponseWriter, r *http.Request,
 var jailNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 func (ws *webServer) handleF2BStatus(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	errorHost := configRead("REVPRO_F2B_ERROR_HOST")
 	if !f2bAvailable() {
 		writeJSON(w, map[string]any{
 			"installed": false, "abuseConfigured": f2bAbuseIPDBConfigured(), "abuseThreshold": abuseThreshold(),
+			"errorHost": errorHost,
 		})
 		return
 	}
@@ -1348,6 +1353,7 @@ func (ws *webServer) handleF2BStatus(w http.ResponseWriter, _ *http.Request, _ *
 	writeJSON(w, map[string]any{
 		"installed": true, "jails": jails,
 		"abuseConfigured": f2bAbuseIPDBConfigured(), "abuseThreshold": abuseThreshold(),
+		"errorHost": errorHost,
 	})
 }
 
@@ -1393,6 +1399,51 @@ func (ws *webServer) handleF2BJailDetail(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, map[string]any{"name": name, "bannedIPs": rows})
 }
 
+// handleF2BApproaching returns IPs partway to tripping a jail's maxretry —
+// "what's about to be banned."
+func (ws *webServer) handleF2BApproaching(w http.ResponseWriter, _ *http.Request, _ *webSession) {
+	writeJSON(w, map[string]any{"approaching": approachingBans()})
+}
+
+// handleF2BErrorHostSave persists REVPRO_F2B_ERROR_HOST — the shared
+// error-redirect trap host (see f2bJailLocal). Validated the same as any
+// other domain-ish input; blank clears it (disables that jail on the next
+// setup run).
+func (ws *webServer) handleF2BErrorHostSave(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	var req struct {
+		Host string `json:"host"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
+		httpErrJSON(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	req.Host = strings.TrimSpace(req.Host)
+	if req.Host != "" && !domainRe.MatchString(req.Host) {
+		httpErrJSON(w, http.StatusBadRequest, "bad hostname")
+		return
+	}
+	if err := configWrite("REVPRO_F2B_ERROR_HOST", req.Host); err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "host": req.Host})
+}
+
+// ---------- activity (audit) log ----------
+
+func (ws *webServer) handleAudit(w http.ResponseWriter, r *http.Request, _ *webSession) {
+	limit := 100
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
+		limit = n
+	}
+	entries, err := ws.c.recentAudit(limit)
+	if err != nil {
+		httpErrJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"entries": entries})
+}
+
 func f2bBanRequest(w http.ResponseWriter, r *http.Request) (jail, ip string, err error) {
 	var req struct{ Jail, IP string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<12)).Decode(&req); err != nil {
@@ -1417,6 +1468,7 @@ func (ws *webServer) handleF2BBan(w http.ResponseWriter, r *http.Request, _ *web
 		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	fireWebhook(ws.c, "fail2ban-ban", map[string]any{"ip": ip, "jail": jail, "via": "web UI"})
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -1430,6 +1482,7 @@ func (ws *webServer) handleF2BUnban(w http.ResponseWriter, r *http.Request, _ *w
 		httpErrJSON(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	ws.c.appendAudit("fail2ban-unban", map[string]any{"ip": ip, "jail": jail})
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -1757,9 +1810,24 @@ func (ws *webServer) handleCurrent(w http.ResponseWriter, r *http.Request, _ *we
 	if err != nil {
 		events = nil
 	}
-	ips, err := ws.c.ipAccessStats(10)
+	stats, err := ws.c.ipAccessStats(10)
 	if err != nil {
-		ips = nil
+		stats = nil
+	}
+	geoCache := ws.c.loadGeoCache()
+	liveLookups, geoDirty := 0, false
+	ips := make([]ipRowJSON, 0, len(stats))
+	for _, st := range stats {
+		row := ipRowJSON{IP: st.IP, Requests: st.Requests, Sites: st.Sites}
+		if !st.LastSeen.IsZero() {
+			row.LastSeen = st.LastSeen.Format(time.RFC3339)
+		}
+		g := boundedGeoLookup(geoCache, st.IP, &liveLookups, maxLiveGeoLookupsPerRequest, &geoDirty)
+		row.Country, row.CountryCode, row.City, row.Local = g.Country, g.CountryCode, g.City, g.Local
+		ips = append(ips, row)
+	}
+	if geoDirty {
+		_ = ws.c.saveGeoCache(geoCache)
 	}
 
 	bannedTotal := 0
